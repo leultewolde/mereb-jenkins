@@ -31,8 +31,8 @@ def call(Map args = [:]) {
     }
 
     // -------------------- Resolve agent/env from cfg -----------------------------------
-    def label  = cfg.agent?.label
-    def docker = cfg.agent?.docker
+    def label       = (cfg.agent?.label ?: '').trim()
+    def dockerImage = (cfg.agent?.docker ?: '').trim()
 
     // -------------------- Core body to run inside chosen agent -------------------------
     def runCore = {
@@ -50,19 +50,19 @@ def call(Map args = [:]) {
 
 
     // -------------------- Agent selection & proper checkout ----------------------------
-    if (docker && label) {
+    if (dockerImage && label) {
         node(label) {
             // checkout on the actual build node so workspace exists on host
             checkout scm
             // then run the pipeline inside the container with mounted workspace
-            docker.image(docker).inside {
+            docker.image(dockerImage).inside {
                 runCore()
             }
         }
-    } else if (docker) {
+    } else if (dockerImage) {
         node {
             checkout scm
-            docker.image(docker).inside {
+            docker.image(dockerImage).inside {
                 runCore()
             }
         }
