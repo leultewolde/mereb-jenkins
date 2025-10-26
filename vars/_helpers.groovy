@@ -1,6 +1,6 @@
 // vars/_helpers.groovy
 //
-// Small helper namespace used from ciV2.groovy
+// Small helper namespace used from ciV1.groovy
 //
 
 class Helpers implements Serializable {

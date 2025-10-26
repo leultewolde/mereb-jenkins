@@ -1,12 +1,12 @@
-// vars/ciV2.groovy
+// vars/ciV1.groovy
 //
-// Entry point for YAML-driven pipelines (version 2).
+// Entry point for YAML-driven pipelines (version 1).
 // Usage from a repo Jenkinsfile:
-//   @Library('hidmo-ci-lib@v2') _
-//   ciV2()
+//   @Library('hidmo-ci-lib@v1') _
+//   ciV1()
 //
 // Schema summary (ci.yml):
-// version: 2
+// version: 1
 // preset: node | java-gradle
 // agent: { label: "...", docker: "node:20" }   # optional
 // env: { KEY: "VALUE" }                        # optional
@@ -22,7 +22,7 @@ def call(Map args = [:]) {
     checkout scm
     if (!fileExists('ci.yml')) error "ci.yml not found at repo root"
     def cfg = readYaml(file: 'ci.yml') ?: [:]
-    if ((cfg.version as Integer) != 2) error "ci.yml version must be 2"
+    if ((cfg.version as Integer) != 1) error "ci.yml version must be 1"
 
     // --- Resolve agent/env -----------------------------------------------------
     def label  = cfg.agent?.label
