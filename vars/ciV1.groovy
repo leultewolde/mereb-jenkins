@@ -19,19 +19,24 @@
 //
 def call(Map args = [:]) {
     // --- Load config -----------------------------------------------------------
-    checkout scm
-    if (!fileExists('ci.yml')) error "ci.yml not found at repo root"
-    def cfg = readYaml(file: 'ci.yml') ?: [:]
-    if ((cfg.version as Integer) != 1) error "ci.yml version must be 1"
+    def cfg = null
+    def baseEnv = [] as List<String>
 
-    // --- Resolve agent/env -----------------------------------------------------
+    node(args?.bootstrapLabel ?: '') {
+        checkout scm
+        if (!fileExists('ci.yml')) error "ci.yml not found at repo root"
+        cfg = readYaml(file: 'ci.yml') ?: [:]
+        if ((cfg.version as Integer) != 1) error "ci.yml version must be 1"
+        baseEnv = (cfg.env ?: [:]).collect { k, v -> "${k}=${v}" }
+    }
+
+    // -------------------- Resolve agent/env from cfg -----------------------------------
     def label  = cfg.agent?.label
     def docker = cfg.agent?.docker
-    def envMap = (cfg.env ?: [:]).collect { k,v -> "${k}=${v}" }
 
-    // --- Pipeline body (what to run) ------------------------------------------
-    def runBody = {
-        withEnv(envMap) {
+    // -------------------- Core body to run inside chosen agent -------------------------
+    def runCore = {
+        withEnv(baseEnv) {
             // 1) Build & Test from preset
             runPreset(cfg)
 
@@ -43,16 +48,34 @@ def call(Map args = [:]) {
         }
     }
 
-    // --- Agent selection -------------------------------------------------------
+
+    // -------------------- Agent selection & proper checkout ----------------------------
     if (docker && label) {
-        // Node label + Docker
-        node(label) { docker.image(docker).inside { runBody() } }
+        node(label) {
+            // checkout on the actual build node so workspace exists on host
+            checkout scm
+            // then run the pipeline inside the container with mounted workspace
+            docker.image(docker).inside {
+                runCore()
+            }
+        }
     } else if (docker) {
-        node { docker.image(docker).inside { runBody() } }
+        node {
+            checkout scm
+            docker.image(docker).inside {
+                runCore()
+            }
+        }
     } else if (label) {
-        node(label) { runBody() }
+        node(label) {
+            checkout scm
+            runCore()
+        }
     } else {
-        node { runBody() }
+        node {
+            checkout scm
+            runCore()
+        }
     }
 }
 
@@ -123,16 +146,16 @@ private void runDeploys(Map deploy) {
 
 // --------------------------- VERBS -------------------------------------------
 // Supported verbs (string commands):
-// - "npm \"<args>\""                -> npm <args>
-// - "node.build"                    -> npm ci && npm run build
-// - "node.test"                     -> npm test -- --ci
-// - "gradle.build"                  -> ./gradlew build --no-daemon
-// - "gradle.test"                   -> ./gradlew test --no-daemon
-// - "gradle.publish"                -> ./gradlew publish --no-daemon
+// - "npm \"<args>\""                  -> npm <args>
+// - "node.build"                      -> npm ci && npm run build
+// - "node.test"                       -> npm test -- --ci
+// - "gradle.build"                    -> ./gradlew build --no-daemon
+// - "gradle.test"                     -> ./gradlew test --no-daemon
+// - "gradle.publish"                  -> ./gradlew publish --no-daemon
 // - "docker.build tag=<tag> [file=.]" -> docker build -t <tag> <file>
-// - "docker.push tag=<tag>"         -> docker push <tag>
-// - "k8s.apply file=<path>"         -> kubectl apply -f <path>
-// - "sh \"<command>\""              -> raw shell
+// - "docker.push tag=<tag>"           -> docker push <tag>
+// - "k8s.apply file=<path>"           -> kubectl apply -f <path>
+// - "sh \"<command>\""                -> raw shell
 private void runVerb(String spec) {
     spec = spec.trim()
     if (spec.startsWith('sh ')) {
