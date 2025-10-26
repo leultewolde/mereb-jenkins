@@ -36,19 +36,26 @@ def call(Map args = [:]) {
 
     // -------------------- Core body to run inside chosen agent -------------------------
     def runCore = {
-        // Resolve the current workspace path *inside* the container/node
-        def ws = pwd()
+        // workspace path inside the current node/container
+        final String ws = pwd()
+        if (!ws?.trim()) { error "Workspace path is empty; cannot proceed." }
 
-        // Build env block (base + safe HOME/GRADLE paths)
-        def envBlock = []
+        // Build env we’ll export to steps
+        List<String> envBlock = []
         envBlock.addAll(baseEnv)
-        envBlock << "HOME=${(env.HOME?.trim() && env.HOME != '/') ? env.HOME : ws}"
-        envBlock << "GRADLE_USER_HOME=${ws}/.gradle"
+        // Prefer an existing HOME if sane; otherwise force HOME to the workspace
+        final String safeHome = (env.HOME?.trim() && env.HOME != "/") ? env.HOME : ws
+        final String gradleHome = "${ws}/.gradle"
+        envBlock << ("HOME=${safeHome}" as String)
+        envBlock << ("GRADLE_USER_HOME=${gradleHome}" as String)
+
+        // Create the gradle dir using the resolved path (no \"$VAR\" expansion)
+        sh "mkdir -p '${gradleHome}'"
 
         withEnv(baseEnv) {
-            // Sanity: ensure gradlew is executable and cache dir exists
+            // debug once if needed
+            sh 'echo WS=$(pwd); echo HOME=$HOME; echo GRADLE_USER_HOME=$GRADLE_USER_HOME'
             sh 'chmod +x ./gradlew || true'
-            sh 'mkdir -p "$GRADLE_USER_HOME"'
 
             // Run your normal flow
             // now run your normal flow
