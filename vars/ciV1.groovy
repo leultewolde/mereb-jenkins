@@ -36,15 +36,21 @@ def call(Map args = [:]) {
 
     // -------------------- Core body to run inside chosen agent -------------------------
     def runCore = {
-        // ensure HOME and GRADLE cache go to the workspace (writable)
-        def extraEnv = []
-        if (!env.HOME || env.HOME == '/' ) {
-            extraEnv << "HOME=${env.WORKSPACE}"
-        }
-        extraEnv << "GRADLE_USER_HOME=${env.WORKSPACE}/.gradle"
+        // Resolve the current workspace path *inside* the container/node
+        def ws = pwd()
+
+        // Build env block (base + safe HOME/GRADLE paths)
+        def envBlock = []
+        envBlock.addAll(baseEnv)
+        envBlock << "HOME=${(env.HOME?.trim() && env.HOME != '/') ? env.HOME : ws}"
+        envBlock << "GRADLE_USER_HOME=${ws}/.gradle"
+
         withEnv(baseEnv) {
-            // make sure the directories exist
+            // Sanity: ensure gradlew is executable and cache dir exists
+            sh 'chmod +x ./gradlew || true'
             sh 'mkdir -p "$GRADLE_USER_HOME"'
+
+            // Run your normal flow
             // now run your normal flow
             // 1) Build & Test from preset
             runPreset(cfg)
