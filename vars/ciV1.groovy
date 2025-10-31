@@ -1,5 +1,6 @@
 // vars/ciV1.groovy
-//
+
+import org._hidmo.Helpers
 // Entry point for YAML-driven pipelines (version 1).
 // Usage from a repo Jenkinsfile:
 //   @Library('hidmo-ci-lib@v1') _
@@ -267,5 +268,5 @@ private void requireApproval(String approve, String envName) {
 }
 
 private boolean shouldRun(String cond) {
-    return org._hidmo.Helpers.matchCondition(cond, env)
+    return Helpers.matchCondition(cond, env)
 }
