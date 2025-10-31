@@ -355,13 +355,24 @@ private void runTerraform(Map tfCfg) {
             List<Map> bindings = buildCredentialBindings(envCfg)
             Closure execute = {
                 dir(basePath) {
+                    Map<String, String> combinedVars = [:]
+                    combinedVars.putAll(envCfg.vars ?: [:])
+                    String kubeEnvVar = envCfg.kubeconfigEnv ?: 'KUBECONFIG'
+                    String kubePath = env[kubeEnvVar]
+                    if (kubePath?.trim() && !combinedVars.containsKey('kubeconfig_path')) {
+                        combinedVars['kubeconfig_path'] = kubePath.trim()
+                    }
+                    if (envCfg.kubeContext && !combinedVars.containsKey('kube_context')) {
+                        combinedVars['kube_context'] = envCfg.kubeContext
+                    }
+
                     Closure commands = {
                         if (!envList.isEmpty()) {
                             withEnv(envList) {
-                                runTerraformCommands(binary, tfCfg, envCfg, backend)
+                                runTerraformCommands(binary, tfCfg, envCfg, backend, combinedVars)
                             }
                         } else {
-                            runTerraformCommands(binary, tfCfg, envCfg, backend)
+                            runTerraformCommands(binary, tfCfg, envCfg, backend, combinedVars)
                         }
                     }
                     commands()
@@ -373,10 +384,10 @@ private void runTerraform(Map tfCfg) {
     }
 }
 
-private void runTerraformCommands(String binary, Map tfCfg, Map envCfg, Map backend) {
+private void runTerraformCommands(String binary, Map tfCfg, Map envCfg, Map backend, Map vars) {
     runTerraformInit(binary, tfCfg.initArgs, envCfg.initArgs, backend)
     String planOut = envCfg.planOut
-    runTerraformPlan(binary, tfCfg.planArgs, envCfg.planArgs, envCfg.varFiles, envCfg.vars, planOut)
+    runTerraformPlan(binary, tfCfg.planArgs, envCfg.planArgs, envCfg.varFiles, vars, planOut)
     if (envCfg.apply as Boolean) {
         runTerraformApply(binary, tfCfg.applyArgs, envCfg.applyArgs, planOut, envCfg.autoApply as Boolean)
     } else {
@@ -744,6 +755,7 @@ private Map normalizeTerraformEnvironment(String name, Object raw) {
         when                : (data.when ?: '!pr').toString(),
         kubeconfigCredential: data.kubeconfigCredential?.toString(),
         kubeconfigEnv       : (data.kubeconfigEnv ?: 'KUBECONFIG').toString(),
+        kubeContext         : (data.kubeContext ?: data.context)?.toString(),
         credentials         : credentials,
         env                 : envMap,
         vars                : varsMap,
