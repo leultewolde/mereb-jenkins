@@ -5,7 +5,7 @@ package org._hidmo
  */
 class Helpers implements Serializable {
 
-    static boolean matchCondition(String cond, Map env) {
+    static boolean matchCondition(String cond, Object envCtx) {
         if (!cond || cond.trim().isEmpty()) {
             return true
         }
@@ -17,15 +17,15 @@ class Helpers implements Serializable {
         boolean ok = true
         for (p in parts) {
             if (p == 'pr') {
-                ok &= (env.CHANGE_ID?.trim())
+                ok &= (envValue(envCtx, 'CHANGE_ID')?.trim())
             } else if (p == '!pr') {
-                ok &= !(env.CHANGE_ID?.trim())
+                ok &= !(envValue(envCtx, 'CHANGE_ID')?.trim())
             } else if (p.startsWith('branch=')) {
                 def val = p.substring('branch='.length())
-                ok &= matchBranch(env.BRANCH_NAME ?: '', val)
+                ok &= matchBranch(envValue(envCtx, 'BRANCH_NAME') ?: '', val)
             } else if (p.startsWith('tag=')) {
                 def re = p.substring('tag='.length())
-                ok &= (env.TAG_NAME ?: '') ==~ (re)
+                ok &= (envValue(envCtx, 'TAG_NAME') ?: '') ==~ (re)
             } else {
                 ok = false
             }
@@ -42,5 +42,27 @@ class Helpers implements Serializable {
             return (actual ?: '') ==~ (pattern)
         }
         return (actual ?: '') == (pattern)
+    }
+
+    private static String envValue(Object envCtx, String key) {
+        if (envCtx instanceof Map) {
+            def v = ((Map) envCtx)[key]
+            return v?.toString()
+        }
+        if (envCtx?.metaClass?.respondsTo(envCtx, 'getEnvironment')) {
+            def envMap = envCtx.getEnvironment()
+            if (envMap instanceof Map) {
+                def v = envMap[key]
+                if (v != null) {
+                    return v.toString()
+                }
+            }
+        }
+        try {
+            def v = envCtx?.getProperty(key)
+            return v?.toString()
+        } catch (MissingPropertyException ignored) {
+            return null
+        }
     }
 }
