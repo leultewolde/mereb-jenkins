@@ -327,7 +327,7 @@ private void runTerraform(Map tfCfg) {
     if (!envs || envs.isEmpty()) return
     List<String> order = tfCfg.order ?: []
     String basePath = (tfCfg.path ?: 'infra/platform/terraform').toString()
-    String binary = (tfCfg.binary ?: 'terraform').toString()
+    String binary = resolveTerraformBinary(tfCfg)
     List<String> globalEnv = mapToEnvList(tfCfg.env)
     Map<String, String> globalBackend = tfCfg.backend ?: [:]
 
@@ -707,17 +707,24 @@ private Map normalizeTerraform(Object raw) {
         envs.keySet().each { order << it }
     }
 
+    boolean autoInstall = section.containsKey('autoInstall') ? section.autoInstall as Boolean : true
+    String installDir = (section.installDir ?: '.ci/bin').toString()
+    String version = (section.version ?: '1.6.6').toString()
+
     Map cfg = [
-        enabled    : !envs.isEmpty(),
-        path       : (section.path ?: 'infra/platform/terraform').toString(),
-        binary     : (section.binary ?: 'terraform').toString(),
-        env        : toStringMap(section.env),
-        initArgs   : toStringList(section.initArgs),
-        planArgs   : toStringList(section.planArgs),
-        applyArgs  : toStringList(section.applyArgs),
-        backend    : toStringMap(section.backendConfig),
-        order      : order,
-        environments: envs
+        enabled     : !envs.isEmpty(),
+        path        : (section.path ?: 'infra/platform/terraform').toString(),
+        binary      : (section.binary ?: 'terraform').toString(),
+        env         : toStringMap(section.env),
+        initArgs    : toStringList(section.initArgs),
+        planArgs    : toStringList(section.planArgs),
+        applyArgs   : toStringList(section.applyArgs),
+        backend     : toStringMap(section.backendConfig),
+        order       : order,
+        environments: envs,
+        autoInstall : autoInstall,
+        installDir  : installDir,
+        version     : version
     ]
     return cfg
 }
@@ -793,6 +800,109 @@ private List<Map> normalizeTerraformCredentials(Object raw) {
         }
     }
     return list
+}
+
+private String resolveTerraformBinary(Map tfCfg) {
+    String configured = (tfCfg.binary ?: 'terraform').toString()
+    String normalized = normalizeTerraformBinaryPath(configured)
+    if (terraformExecutableExists(normalized)) {
+        return normalized
+    }
+    if (!(tfCfg.autoInstall as Boolean)) {
+        error "Terraform binary '${configured}' not found on PATH. Enable terraform.autoInstall or provide terraform.binary."
+    }
+    return installTerraformBinary(tfCfg)
+}
+
+private String normalizeTerraformBinaryPath(String binary) {
+    if (!binary) {
+        return 'terraform'
+    }
+    if (binary.startsWith('/')) {
+        return binary
+    }
+    if (binary.contains('/') || binary.contains('\\')) {
+        String ws = pwd()
+        return "${ws.replaceAll(/\/+$/, '')}/${binary}"
+    }
+    return binary
+}
+
+private boolean terraformExecutableExists(String binary) {
+    String script
+    if (!binary) {
+        return false
+    }
+    if (binary.contains('/') || binary.contains('\\')) {
+        script = "[ -x ${shellEscape(binary)} ] && echo yes || echo no"
+    } else {
+        script = "command -v ${shellEscape(binary)} >/dev/null 2>&1 && echo yes || echo no"
+    }
+    return sh(script: script, returnStdout: true).trim() == 'yes'
+}
+
+private String installTerraformBinary(Map tfCfg) {
+    String installDir = resolveTerraformInstallDir(tfCfg)
+    String targetPath = "${installDir}/terraform"
+    if (terraformExecutableExists(targetPath)) {
+        return targetPath
+    }
+
+    String version = (tfCfg.version ?: '1.6.6').toString()
+    Map platform = detectTerraformPlatform()
+    String archiveUrl = "https://releases.hashicorp.com/terraform/${version}/terraform_${version}_${platform.os}_${platform.arch}.zip"
+    String zipPath = "${installDir}/terraform_${version}.zip"
+
+    echo "Terraform binary not found. Installing Terraform ${version} to ${targetPath}"
+    sh "mkdir -p ${shellEscape(installDir)}"
+    sh """
+        set -e
+        curl -fsSL ${shellEscape(archiveUrl)} -o ${shellEscape(zipPath)}
+        unzip -o ${shellEscape(zipPath)} -d ${shellEscape(installDir)}
+        rm -f ${shellEscape(zipPath)}
+        chmod +x ${shellEscape(targetPath)}
+    """
+    return targetPath
+}
+
+private String resolveTerraformInstallDir(Map tfCfg) {
+    String dir = (tfCfg.installDir ?: '.ci/bin').toString()
+    if (dir.startsWith('/')) {
+        return dir
+    }
+    String ws = pwd()
+    return "${ws.replaceAll(/\/+$/, '')}/${dir}"
+}
+
+@NonCPS
+private Map detectTerraformPlatform() {
+    String os = System.getProperty('os.name')?.toLowerCase() ?: ''
+    String arch = System.getProperty('os.arch')?.toLowerCase() ?: ''
+
+    String osLabel
+    if (os.contains('linux')) {
+        osLabel = 'linux'
+    } else if (os.contains('mac') || os.contains('darwin')) {
+        osLabel = 'darwin'
+    } else if (os.contains('windows')) {
+        osLabel = 'windows'
+    } else {
+        throw new RuntimeException("Unsupported operating system '${os}' for Terraform auto-install.")
+    }
+
+    String archLabel
+    switch (arch) {
+        case ['amd64', 'x86_64']:
+            archLabel = 'amd64'
+            break
+        case ['arm64', 'aarch64']:
+            archLabel = 'arm64'
+            break
+        default:
+            throw new RuntimeException("Unsupported architecture '${arch}' for Terraform auto-install.")
+    }
+
+    return [os: osLabel, arch: archLabel]
 }
 
 private Map normalizeDeploy(Map raw) {
