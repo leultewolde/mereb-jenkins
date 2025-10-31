@@ -1,96 +1,127 @@
-// vars/ciV1.groovy
+import groovy.transform.Field
+import java.util.regex.Matcher
+import java.util.regex.Pattern
 
 import org._hidmo.Helpers
-// Entry point for YAML-driven pipelines (version 1).
-// Usage from a repo Jenkinsfile:
-//   @Library('hidmo-ci-lib@v1') _
-//   ciV1()
-//
-// Schema summary (ci.yml):
-// version: 1
-// preset: node | java-gradle
-// agent: { label: "...", docker: "node:20" }   # optional
-// env: { KEY: "VALUE" }                        # optional
-// matrix: { group: [ "npm \"ci && npm run lint\"", "gradle.build" ] }  # optional
-// deploy:
-//   <env>:
-//     when: "branch=main & !pr"                # optional
-//     approve: "user:leul" | "group:release-managers"
-//     steps: [ "docker.build tag=org/app:${GIT_COMMIT}", "k8s.apply file=k8s/" ]
-//
+
+@Field final String PRIMARY_CONFIG = '.ci/ci.yml'
+@Field final String LEGACY_CONFIG  = 'ci.yml'
+@Field final List<String> DEFAULT_ENV_ORDER = ['dev', 'stg', 'prd', 'prod']
+
 def call(Map args = [:]) {
-    // --- Load config -----------------------------------------------------------
-    def cfg = null
-    def baseEnv = [] as List<String>
+    Map rawCfg = [:]
+    List<String> baseEnv = []
+    String configPath = (args?.configPath ?: '').toString().trim()
 
     node(args?.bootstrapLabel ?: '') {
         checkout scm
-        if (!fileExists('ci.yml')) error "ci.yml not found at repo root"
-        cfg = readYaml(file: 'ci.yml') ?: [:]
-        if ((cfg.version as Integer) != 1) error "ci.yml version must be 1"
-        baseEnv = (cfg.env ?: [:]).collect { k, v -> "${k}=${v}" }
+        if (configPath) {
+            if (!fileExists(configPath)) {
+                error "Pipeline configuration '${configPath}' not found."
+            }
+        } else {
+            configPath = locateConfig()
+            if (!configPath) {
+                error "Pipeline configuration not found. Add ${PRIMARY_CONFIG}"
+            }
+        }
+        rawCfg = readYaml(file: configPath) ?: [:]
+        int version = (rawCfg.version ?: 1) as Integer
+        if (version != 1) {
+            error "Pipeline config version must be 1 (found ${version})"
+        }
+        baseEnv = (rawCfg.env ?: [:]).collect { k, v -> "${k}=${v}" }
     }
 
-    // -------------------- Resolve agent/env from cfg -----------------------------------
-    def label       = (cfg.agent?.label ?: '').trim()
-    def dockerImage = (cfg.agent?.docker ?: '').trim()
+    Map cfg = normalizeConfig(rawCfg)
+    Map agent = cfg.agent
 
-    // -------------------- Core body to run inside chosen agent -------------------------
     def runCore = {
-        // workspace path inside the current node/container
         final String ws = pwd()
-        if (!ws?.trim()) { error "Workspace path is empty; cannot proceed." }
+        if (!ws?.trim()) {
+            error "Workspace path is empty"
+        }
 
-        // Build env we’ll export to steps
-        List<String> envBlock = []
-        envBlock.addAll(baseEnv)
-        // Prefer an existing HOME if sane; otherwise force HOME to the workspace
-        final String safeHome = (env.HOME?.trim() && env.HOME != "/") ? env.HOME : ws
-        final String gradleHome = "${ws}/.gradle"
-        envBlock << ("HOME=${safeHome}" as String)
-        envBlock << ("GRADLE_USER_HOME=${gradleHome}" as String)
+        final Map<String, String> state = [:]
+        state.commit = resolveCommitSha()
+        state.commitShort = state.commit.take(12)
+        state.branch = env.BRANCH_NAME ?: ''
+        state.branchSanitized = sanitizeBranch(state.branch)
+        state.buildNumber = (env.BUILD_NUMBER ?: '').toString()
+        state.tagName = env.TAG_NAME ?: ''
+        state.repository = cfg.image.repository
 
-        // Create the gradle dir using the resolved path (no \"$VAR\" expansion)
-        sh "mkdir -p '${gradleHome}'"
+        state.imageTag = resolveImageTag(cfg.image, state)
+        state.imageRef = "${cfg.image.repository}:${state.imageTag}"
 
-        withEnv(envBlock) {
-            // debug once if needed
-            sh 'echo WS=$(pwd); echo HOME=$HOME; echo GRADLE_USER_HOME=$GRADLE_USER_HOME'
+        List<String> exportedEnv = []
+        exportedEnv.addAll(baseEnv)
+        exportedEnv << "HOME=${determineHome(ws)}"
+        exportedEnv << "GRADLE_USER_HOME=${ws}/.gradle"
+        exportedEnv << "IMAGE_REPOSITORY=${cfg.image.repository}"
+        exportedEnv << "IMAGE_TAG=${state.imageTag}"
+        exportedEnv << "IMAGE_REF=${state.imageRef}"
+
+        sh "mkdir -p '${ws}/.gradle'"
+
+        withEnv(exportedEnv) {
+            checkout scm
             sh 'chmod +x ./gradlew || true'
 
-            // Run your normal flow
-            // now run your normal flow
-            // 1) Build & Test from preset
-            runPreset(cfg)
-
-            // 2) Matrix (parallel optional)
+            runBuildStages(cfg.buildStages)
             runMatrix(cfg.matrix)
 
-            // 3) Deploys (conditional + approvals)
-            runDeploys(cfg.deploy)
+            stage('Docker Build') {
+                dockerBuild(cfg.image, state)
+            }
+
+            if (shouldGenerateSbom(cfg)) {
+                stage('SBOM') {
+                    generateSbom(cfg, state)
+                }
+            }
+
+            if (shouldScan(cfg)) {
+                stage('Vulnerability Scan') {
+                    scanImage(cfg, state)
+                }
+            }
+
+            if (shouldPush(cfg)) {
+                stage('Docker Push') {
+                    dockerPush(cfg, state)
+                }
+            } else {
+                echo "Docker push skipped by condition '${cfg.image.push.when}'"
+            }
+
+            if (shouldSign(cfg)) {
+                stage('Sign Image') {
+                    signImage(cfg, state)
+                }
+            }
+
+            runTerraform(cfg.terraform)
+            deployEnvironments(cfg, state)
         }
     }
 
-
-    // -------------------- Agent selection & proper checkout ----------------------------
-    if (dockerImage && label) {
-        node(label) {
-            // checkout on the actual build node so workspace exists on host
+    if (agent.docker && agent.label) {
+        node(agent.label) {
             checkout scm
-            // then run the pipeline inside the container with mounted workspace
-            docker.image(dockerImage).inside {
+            docker.image(agent.docker).inside {
                 runCore()
             }
         }
-    } else if (dockerImage) {
+    } else if (agent.docker) {
         node {
             checkout scm
-            docker.image(dockerImage).inside {
+            docker.image(agent.docker).inside {
                 runCore()
             }
         }
-    } else if (label) {
-        node(label) {
+    } else if (agent.label) {
+        node(agent.label) {
             checkout scm
             runCore()
         }
@@ -102,21 +133,22 @@ def call(Map args = [:]) {
     }
 }
 
-// --------------------------- PRESET ------------------------------------------
-private void runPreset(cfg) {
-    def preset = (cfg.preset ?: 'node') as String
-    stage("Preset: ${preset}") {
-        switch (preset) {
-            case 'node':
-                runVerb("node.build")
-                runVerb("node.test")
-                break
-            case 'java-gradle':
-                runVerb("gradle.build")
-                runVerb("gradle.test")
-                break
-            default:
-                error "Unknown preset '${preset}'. Allowed: node, java-gradle"
+// --------------------------- BUILD -------------------------------------------
+private void runBuildStages(List<Map> stages) {
+    if (!stages || stages.isEmpty()) {
+        echo "No build stages defined; skipping build/test."
+        return
+    }
+    stages.each { Map stageCfg ->
+        String name = stageCfg.name ?: 'Build'
+        stage(name) {
+            if (stageCfg.verb) {
+                runVerb(stageCfg.verb as String)
+            } else if (stageCfg.sh) {
+                sh stageCfg.sh as String
+            } else {
+                echo "Stage '${name}' has no action."
+            }
         }
     }
 }
@@ -127,7 +159,7 @@ private void runMatrix(Map matrix) {
     matrix.each { groupName, steps ->
         stage("Matrix: ${groupName}") {
             Map branches = [:]
-            steps.each { s ->
+            (steps as List).each { s ->
                 def title = titleForStep(s)
                 branches[title] = {
                     runVerb(s as String)
@@ -144,41 +176,879 @@ private String titleForStep(Object s) {
     return raw.take(30)
 }
 
-// --------------------------- DEPLOY ------------------------------------------
-private void runDeploys(Map deploy) {
-    if (!deploy || deploy.isEmpty()) return
-    deploy.each { envName, d ->
-        if (!shouldRun(d?.when as String)) {
-            echo "Skip deploy '${envName}' — condition '${d?.when ?: "none"}' not met"
+// --------------------------- DOCKER ------------------------------------------
+private void dockerBuild(Map imageCfg, Map state) {
+    List<String> cmd = ["docker", "build"]
+    if (imageCfg.platforms) {
+        cmd << "--platform=${(imageCfg.platforms as List).join(',')}"
+    }
+    cmd << "-f ${shellEscape(imageCfg.dockerfile as String)}"
+
+    (imageCfg.buildArgs ?: [:]).each { k, v ->
+        String value = renderTemplate(v?.toString(), templateContext(state))
+        cmd << "--build-arg ${shellEscape("${k}=${value}")}"
+    }
+
+    (imageCfg.buildFlags ?: []).each { flag ->
+        cmd << flag.toString()
+    }
+
+    cmd << "-t ${shellEscape(state.imageRef)}"
+    cmd << shellEscape(imageCfg.context as String)
+    sh cmd.join(' ')
+}
+
+private void dockerPush(Map cfg, Map state) {
+    sh "docker push ${shellEscape(state.imageRef)}"
+    (cfg.image.push.extraTags ?: []).each { rawTag ->
+        String rendered = renderTemplate(rawTag.toString(), templateContext(state))
+        if (!rendered?.trim()) {
             return
         }
-        stage("Deploy: ${envName}") {
-            // approvals (optional)
-            if (d?.approve) {
-                requireApproval(d.approve as String, envName)
-            }
-            // steps
-            (d.steps ?: []).each { s ->
-                stage("Deploy: ${envName} • ${titleForStep(s)}") {
-                    runVerb(s as String)
+        String ref = "${cfg.image.repository}:${rendered}"
+        sh "docker tag ${shellEscape(state.imageRef)} ${shellEscape(ref)}"
+        sh "docker push ${shellEscape(ref)}"
+    }
+}
+
+// --------------------------- SBOM / SCAN / SIGN ------------------------------
+private boolean shouldGenerateSbom(Map cfg) {
+    return cfg.sbom.enabled as Boolean
+}
+
+private void generateSbom(Map cfg, Map state) {
+    Map sbom = cfg.sbom
+    String output = renderTemplate(sbom.output as String, templateContext(state))
+    if (!output?.trim()) {
+        output = "reports/sbom-${state.imageTag}.json"
+    }
+    String dir = parentDir(output)
+    if (dir) {
+        sh "mkdir -p ${shellEscape(dir)}"
+    }
+    List<String> cmd = []
+    cmd << "syft ${shellEscape(state.imageRef)}"
+    cmd << "-o ${shellEscape(sbom.format as String)}"
+    cmd << "-f ${shellEscape(output)}"
+    cmd << "--scope all-layers"
+    sh cmd.join(' ')
+    archiveArtifacts artifacts: output, fingerprint: true
+}
+
+private boolean shouldScan(Map cfg) {
+    return cfg.scan.enabled as Boolean
+}
+
+private void scanImage(Map cfg, Map state) {
+    Map scan = cfg.scan
+    List<String> cmd = []
+    cmd << "grype ${shellEscape(state.imageRef)}"
+    cmd << "--add-cpes-if-none"
+    cmd << "--fail-on ${shellEscape(scan.failOn as String)}"
+    (scan.flags ?: []).each { flag ->
+        cmd << flag.toString()
+    }
+    sh cmd.join(' ')
+}
+
+private boolean shouldPush(Map cfg) {
+    def pushCfg = cfg.image.push
+    if (!(pushCfg.enabled as Boolean)) {
+        return false
+    }
+    return Helpers.matchCondition(pushCfg.when as String, env)
+}
+
+private boolean shouldSign(Map cfg) {
+    Map signing = cfg.signing
+    if (!(signing.enabled as Boolean)) {
+        return false
+    }
+    return Helpers.matchCondition(signing.when as String, env)
+}
+
+private void signImage(Map cfg, Map state) {
+    Map signing = cfg.signing
+    Map ctx = templateContext(state)
+    List<String> cmd = ["cosign", "sign"]
+    if (signing.keyless) {
+        cmd << "--keyless"
+    } else if (signing.key) {
+        cmd << "--key ${shellEscape(signing.key as String)}"
+    }
+    if (signing.identity) {
+        cmd << "--identity ${shellEscape(renderTemplate(signing.identity as String, ctx))}"
+    }
+    (signing.flags ?: []).each { flag ->
+        cmd << flag.toString()
+    }
+    cmd << shellEscape(state.imageRef)
+
+    List<String> envPairs = []
+    (signing.env ?: [:]).each { k, v ->
+        envPairs << "${k}=${renderTemplate(v?.toString(), ctx)}"
+    }
+
+    if (envPairs) {
+        withEnv(envPairs) {
+            sh cmd.join(' ')
+        }
+    } else {
+        sh cmd.join(' ')
+    }
+}
+
+private void runTerraform(Map tfCfg) {
+    if (!tfCfg?.enabled) return
+    Map envs = tfCfg.environments ?: [:]
+    if (!envs || envs.isEmpty()) return
+    List<String> order = tfCfg.order ?: []
+    String basePath = (tfCfg.path ?: 'infra/platform/terraform').toString()
+    String binary = (tfCfg.binary ?: 'terraform').toString()
+    List<String> globalEnv = mapToEnvList(tfCfg.env)
+    Map<String, String> globalBackend = tfCfg.backend ?: [:]
+
+    order.each { String envName ->
+        Map envCfg = envs[envName]
+        if (!envCfg) {
+            return
+        }
+        if (!Helpers.matchCondition(envCfg.when as String, env)) {
+            echo "Skip terraform '${envCfg.displayName}' — condition '${envCfg.when}' not met"
+            return
+        }
+
+        stage("Terraform ${envCfg.displayName}") {
+            awaitApproval(envCfg.approval as Map, "Apply Terraform for ${envCfg.displayName}?")
+
+            List<String> envList = []
+            envList.addAll(globalEnv)
+            envList.addAll(mapToEnvList(envCfg.env))
+
+            Map<String, String> backend = [:]
+            backend.putAll(globalBackend ?: [:])
+            backend.putAll(envCfg.backend ?: [:])
+
+            List<Map> bindings = buildCredentialBindings(envCfg)
+            Closure execute = {
+                dir(basePath) {
+                    Closure commands = {
+                        if (!envList.isEmpty()) {
+                            withEnv(envList) {
+                                runTerraformCommands(binary, tfCfg, envCfg, backend)
+                            }
+                        } else {
+                            runTerraformCommands(binary, tfCfg, envCfg, backend)
+                        }
+                    }
+                    commands()
                 }
             }
+
+            withOptionalCredentials(bindings, execute)
         }
     }
 }
 
+private void runTerraformCommands(String binary, Map tfCfg, Map envCfg, Map backend) {
+    runTerraformInit(binary, tfCfg.initArgs, envCfg.initArgs, backend)
+    String planOut = envCfg.planOut
+    runTerraformPlan(binary, tfCfg.planArgs, envCfg.planArgs, envCfg.varFiles, envCfg.vars, planOut)
+    if (envCfg.apply as Boolean) {
+        runTerraformApply(binary, tfCfg.applyArgs, envCfg.applyArgs, planOut, envCfg.autoApply as Boolean)
+    } else {
+        echo "Terraform apply skipped for ${envCfg.displayName}"
+    }
+}
+
+private void runTerraformInit(String binary, List<String> globalArgs, List<String> envArgs, Map backend) {
+    List<String> cmd = []
+    cmd << shellEscape(binary)
+    cmd << 'init'
+    (globalArgs ?: []).each { cmd << it.toString() }
+    (envArgs ?: []).each { cmd << it.toString() }
+    (backend ?: [:]).each { k, v ->
+        cmd << "-backend-config=${shellEscape("${k}=${v}")}"
+    }
+    sh cmd.join(' ')
+}
+
+private void runTerraformPlan(String binary, List<String> globalArgs, List<String> envArgs, List<String> varFiles, Map vars, String planOut) {
+    List<String> cmd = []
+    cmd << shellEscape(binary)
+    cmd << 'plan'
+    (globalArgs ?: []).each { cmd << it.toString() }
+    (envArgs ?: []).each { cmd << it.toString() }
+    (varFiles ?: []).each { file ->
+        cmd << "-var-file=${shellEscape(file.toString())}"
+    }
+    (vars ?: [:]).each { k, v ->
+        cmd << "-var=${shellEscape("${k}=${v}")}"
+    }
+    if (planOut) {
+        cmd << "-out=${shellEscape(planOut)}"
+    }
+    sh cmd.join(' ')
+}
+
+private void runTerraformApply(String binary, List<String> globalArgs, List<String> envArgs, String planOut, boolean autoApprove) {
+    List<String> cmd = []
+    cmd << shellEscape(binary)
+    cmd << 'apply'
+    (globalArgs ?: []).each { cmd << it.toString() }
+    (envArgs ?: []).each { cmd << it.toString() }
+    if (autoApprove && !cmd.any { it.contains('-auto-approve') }) {
+        cmd << '-auto-approve'
+    }
+    if (planOut) {
+        cmd << shellEscape(planOut)
+    }
+    sh cmd.join(' ')
+}
+
+// --------------------------- DEPLOY ------------------------------------------
+private void deployEnvironments(Map cfg, Map state) {
+    Map envs = cfg.deploy.environments ?: [:]
+    List<String> order = cfg.deploy.order ?: []
+    if (!envs || envs.isEmpty() || !order) {
+        echo "No deployment environments configured; skipping deploy."
+        return
+    }
+
+    order.eachWithIndex { String envName, int idx ->
+        Map envCfg = envs[envName]
+        if (!envCfg) {
+            echo "Environment '${envName}' not defined; skipping."
+            return
+        }
+        if (!Helpers.matchCondition(envCfg.when as String, env)) {
+            echo "Skip deploy '${envCfg.displayName}' — condition '${envCfg.when}' not met"
+            return
+        }
+
+        List<String> valuesFiles = []
+        if (envCfg.valuesFiles) {
+            valuesFiles.addAll(envCfg.valuesFiles as List)
+        }
+        if (valuesFiles.isEmpty()) {
+            String defaultValues = ".ci/values-${envName}.yaml"
+            if (fileExists(defaultValues)) {
+                valuesFiles = [defaultValues]
+            }
+        }
+
+        stage("Deploy ${envCfg.displayName}") {
+            Map setCombined = [:]
+            setCombined.putAll(envCfg.set ?: [:])
+            setCombined['image.repository'] = state.repository
+            setCombined['image.tag'] = state.imageTag
+
+            helmDeploy(
+                release    : envCfg.release,
+                namespace  : envCfg.namespace,
+                chart      : envCfg.chart,
+                repo       : envCfg.repo,
+                version    : envCfg.chartVersion,
+                valuesFiles: valuesFiles,
+                set        : setCombined,
+                setString  : envCfg.setString,
+                setFile    : envCfg.setFile,
+                kubeContext: envCfg.kubeContext,
+                kubeconfig : envCfg.kubeconfig,
+                wait       : envCfg.wait,
+                atomic     : envCfg.atomic,
+                timeout    : envCfg.timeout
+            )
+        }
+
+        Map smoke = envCfg.smoke ?: [:]
+        if (smoke.url || smoke.script || smoke.command) {
+            stage("Smoke ${envCfg.displayName}") {
+                Map payload = [:]
+                payload.putAll(smoke)
+                payload.environment = envCfg.displayName
+                runSmoke(payload)
+            }
+        }
+
+        if (idx < order.size() - 1 && !(envCfg.autoPromote as Boolean)) {
+            requestPromotion(envCfg, envName, order[idx + 1])
+        }
+    }
+}
+
+private void requestPromotion(Map envCfg, String current, String next) {
+    Map approval = envCfg.approval ?: [:]
+    String message = approval.message ?: "Promote ${current} deployment to ${next}?"
+    String ok = approval.ok ?: 'Promote'
+    if (approval.submitter) {
+        input message: message, ok: ok, submitter: approval.submitter.toString()
+    } else {
+        input message: message, ok: ok
+    }
+}
+
+// --------------------------- NORMALISATION -----------------------------------
+private Map normalizeConfig(Map raw) {
+    Map cfg = [:]
+
+    cfg.agent = [
+        label : (raw.agent?.label ?: '').toString().trim(),
+        docker: (raw.agent?.docker ?: '').toString().trim()
+    ]
+
+    cfg.preset = (raw.preset ?: raw.build?.preset ?: 'node').toString()
+    cfg.matrix = normalizeMatrix(raw.matrix)
+    cfg.buildStages = computeBuildStages(cfg.preset, raw.build)
+
+    cfg.image = normalizeImage(raw)
+    cfg.sbom = normalizeSbom(raw.sbom)
+    cfg.scan = normalizeScan(raw.scan)
+    cfg.signing = normalizeSigning(raw.signing, cfg.image)
+    cfg.terraform = normalizeTerraform(raw.terraform)
+    cfg.deploy = normalizeDeploy(raw)
+
+    return cfg
+}
+
+@NonCPS
+private Map normalizeMatrix(Object raw) {
+    Map result = [:]
+    if (!(raw instanceof Map)) {
+        return result
+    }
+    (raw as Map).each { k, v ->
+        List<String> entries = []
+        if (v instanceof List) {
+            v.each { entries << it.toString() }
+        } else if (v != null) {
+            entries << v.toString()
+        }
+        result[k.toString()] = entries
+    }
+    return result
+}
+
+@NonCPS
+private List<Map> computeBuildStages(String preset, Object buildCfgRaw) {
+    Map buildCfg = buildCfgRaw instanceof Map ? buildCfgRaw : [:]
+    if (buildCfg.stages instanceof List && buildCfg.stages) {
+        return (buildCfg.stages as List).collect { Map stage ->
+            [
+                name: stage.name?.toString() ?: 'Build',
+                verb: stage.verb?.toString(),
+                sh  : stage.sh?.toString()
+            ]
+        }
+    }
+
+    switch (preset) {
+        case 'java-gradle':
+            return [
+                [name: 'Unit Tests', verb: 'gradle.test'],
+                [name: 'Build', verb: 'gradle.build']
+            ]
+        case 'node':
+        default:
+            return [
+                [name: 'Install', verb: 'node.install'],
+                [name: 'Unit Tests', verb: 'node.test'],
+                [name: 'Build', verb: 'node.build']
+            ]
+    }
+}
+
+private Map normalizeImage(Map raw) {
+    Map app = raw.app instanceof Map ? raw.app : [:]
+    Map imageRaw = raw.image instanceof Map ? raw.image : [:]
+
+    String repository = (imageRaw.repository ?: '').toString().trim()
+    if (!repository) {
+        String imageName = (imageRaw.name ?: app.image ?: app.name ?: '').toString().trim()
+        if (!imageName) {
+            error "image.repository or app.name must be defined in ${PRIMARY_CONFIG}"
+        }
+        String registry = (imageRaw.registry ?: app.registry ?: '').toString().trim()
+        if (registry) {
+            String cleaned = registry.replaceAll(/\/+$/, '')
+            repository = cleaned ? "${cleaned}/${imageName}" : imageName
+        } else {
+            repository = imageName
+        }
+    }
+
+    Map pushRaw = imageRaw.push instanceof Map ? imageRaw.push : [:]
+
+    Map imageCfg = [
+        repository : repository,
+        context    : (imageRaw.context ?: '.').toString(),
+        dockerfile : (imageRaw.dockerfile ?: 'Dockerfile').toString(),
+        buildArgs  : toStringMap(imageRaw.buildArgs),
+        buildFlags : toStringList(imageRaw.buildFlags),
+        platforms  : toStringList(imageRaw.platforms),
+        tagStrategy: (imageRaw.tagStrategy ?: 'branch-sha').toString(),
+        tagTemplate: imageRaw.tagTemplate ?: imageRaw.tag
+    ]
+
+    imageCfg.push = [
+        enabled  : pushRaw.enabled == null ? true : pushRaw.enabled as Boolean,
+        when     : (pushRaw.when ?: imageRaw.pushWhen ?: '!pr').toString(),
+        extraTags: toStringList(pushRaw.extraTags ?: imageRaw.extraTags)
+    ]
+
+    return imageCfg
+}
+
+private Map normalizeSbom(Object raw) {
+    Map cfg = raw instanceof Map ? raw : [:]
+    boolean enabled = cfg.enabled == null ? true : cfg.enabled as Boolean
+    return [
+        enabled: enabled,
+        format : (cfg.format ?: 'cyclonedx-json').toString(),
+        output : (cfg.output ?: 'reports/sbom-{{imageTag}}.json').toString()
+    ]
+}
+
+private Map normalizeScan(Object raw) {
+    Map cfg = raw instanceof Map ? raw : [:]
+    boolean enabled = cfg.enabled == null ? true : cfg.enabled as Boolean
+    return [
+        enabled: enabled,
+        failOn : (cfg.failOn ?: 'critical').toString(),
+        flags  : toStringList(cfg.flags ?: cfg.additionalFlags)
+    ]
+}
+
+private Map normalizeSigning(Object raw, Map imageCfg) {
+    Map cfg = raw instanceof Map ? raw : [:]
+    boolean enabled = cfg.enabled == null ? false : cfg.enabled as Boolean
+    return [
+        enabled : enabled,
+        when    : (cfg.when ?: imageCfg.push.when).toString(),
+        key     : cfg.key,
+        keyless : cfg.keyless ? cfg.keyless as Boolean : false,
+        identity: (cfg.identity ?: imageCfg.repository).toString(),
+        flags   : toStringList(cfg.flags),
+        env     : toStringMap(cfg.env)
+    ]
+}
+
+private Map normalizeTerraform(Object raw) {
+    Map section = raw instanceof Map ? raw : [:]
+    Map envs = [:]
+    if (section.environments instanceof Map) {
+        (section.environments as Map).each { k, v ->
+            envs[k.toString()] = normalizeTerraformEnvironment(k.toString(), v)
+        }
+    }
+
+    List<String> order = []
+    if (section.order instanceof List && section.order) {
+        section.order.each { order << it.toString() }
+    } else {
+        envs.keySet().each { order << it }
+    }
+
+    Map cfg = [
+        enabled    : !envs.isEmpty(),
+        path       : (section.path ?: 'infra/platform/terraform').toString(),
+        binary     : (section.binary ?: 'terraform').toString(),
+        env        : toStringMap(section.env),
+        initArgs   : toStringList(section.initArgs),
+        planArgs   : toStringList(section.planArgs),
+        applyArgs  : toStringList(section.applyArgs),
+        backend    : toStringMap(section.backendConfig),
+        order      : order,
+        environments: envs
+    ]
+    return cfg
+}
+
+@NonCPS
+private Map normalizeTerraformEnvironment(String name, Object raw) {
+    Map data = raw instanceof Map ? raw : [:]
+    Map envMap = toStringMap(data.env)
+    Map varsMap = toStringMap(data.vars)
+    Map backendMap = toStringMap(data.backendConfig)
+    List<Map> credentials = normalizeTerraformCredentials(data.credentials)
+    Map approval = normalizeApproval(data.approve ?: data.approval)
+
+    return [
+        name                : name,
+        displayName         : (data.displayName ?: name.toUpperCase()).toString(),
+        when                : (data.when ?: '!pr').toString(),
+        kubeconfigCredential: data.kubeconfigCredential?.toString(),
+        kubeconfigEnv       : (data.kubeconfigEnv ?: 'KUBECONFIG').toString(),
+        credentials         : credentials,
+        env                 : envMap,
+        vars                : varsMap,
+        varFiles            : toStringList(data.varFiles),
+        initArgs            : toStringList(data.initArgs),
+        planArgs            : toStringList(data.planArgs),
+        applyArgs           : toStringList(data.applyArgs),
+        backend             : backendMap,
+        planOut             : (data.planOut ?: "tfplan-${name}").toString(),
+        apply               : data.containsKey('apply') ? data.apply as Boolean : true,
+        autoApply           : data.containsKey('autoApply') ? data.autoApply as Boolean : true,
+        approval            : approval
+    ]
+}
+
+@NonCPS
+private List<Map> normalizeTerraformCredentials(Object raw) {
+    List<Map> list = []
+    if (!(raw instanceof List)) {
+        return list
+    }
+    (raw as List).each { item ->
+        Map entry = item instanceof Map ? item : [:]
+        String type = (entry.type ?: 'string').toString()
+        String id = entry.id?.toString()
+        if (!id) {
+            return
+        }
+        switch (type) {
+            case 'file':
+                String envVar = entry.env ?: entry.variable ?: entry.var
+                if (envVar) {
+                    list << [type: 'file', id: id, env: envVar.toString()]
+                }
+                break
+            case 'usernamePassword':
+                String userEnv = entry.usernameEnv ?: entry.userEnv ?: entry.usernameVariable
+                String passEnv = entry.passwordEnv ?: entry.passEnv ?: entry.passwordVariable
+                if (userEnv && passEnv) {
+                    list << [
+                        type: 'usernamePassword',
+                        id  : id,
+                        usernameEnv: userEnv.toString(),
+                        passwordEnv: passEnv.toString()
+                    ]
+                }
+                break
+            default:
+                String envVar = entry.env ?: entry.variable ?: entry.var
+                if (envVar) {
+                    list << [type: 'string', id: id, env: envVar.toString()]
+                }
+                break
+        }
+    }
+    return list
+}
+
+private Map normalizeDeploy(Map raw) {
+    Map deploySection = [:]
+    if (raw.deploy instanceof Map) {
+        deploySection = raw.deploy
+    } else if (raw.environments instanceof Map) {
+        deploySection = raw.environments
+    }
+    Map appCfg = raw.app instanceof Map ? raw.app : [:]
+    Map envs = [:]
+
+    deploySection.each { k, v ->
+        if (k == 'order') {
+            return
+        }
+        String name = k.toString()
+        Map envCfg = v instanceof Map ? v : [:]
+        envs[name] = normalizeEnvironment(name, envCfg, appCfg)
+    }
+
+    List<String> order = []
+    if (deploySection.order instanceof List && deploySection.order) {
+        deploySection.order.each { order << it.toString() }
+    } else {
+        DEFAULT_ENV_ORDER.each { def candidate ->
+            if (envs.containsKey(candidate) && !order.contains(candidate)) {
+                order << candidate
+            }
+        }
+        envs.keySet().each { name ->
+            if (!order.contains(name)) {
+                order << name
+            }
+        }
+    }
+
+    return [
+        order       : order,
+        environments: envs
+    ]
+}
+
+private Map normalizeEnvironment(String name, Map envCfg, Map appCfg) {
+    Map smoke = normalizeSmoke(envCfg.smoke)
+    Map approval = normalizeApproval(envCfg.approve ?: envCfg.approval)
+
+    String display = (envCfg.displayName ?: name.toUpperCase()).toString()
+    String namespace = (envCfg.namespace ?: appCfg.namespace ?: 'apps').toString()
+    String release = (envCfg.release ?: appCfg.release ?: appCfg.name ?: name).toString()
+    String chart = (envCfg.chart ?: appCfg.chart ?: 'infra/charts/app-chart').toString()
+
+    return [
+        name        : name,
+        displayName : display,
+        namespace   : namespace,
+        release     : release,
+        chart       : chart,
+        repo        : envCfg.repo ?: appCfg.repo,
+        chartVersion: envCfg.version ?: envCfg.chartVersion ?: appCfg.chartVersion,
+        valuesFiles : toStringList(envCfg.values ?: envCfg.valuesFiles),
+        set         : toStringMap(envCfg.set),
+        setString   : toStringMap(envCfg.setString),
+        setFile     : toStringMap(envCfg.setFile),
+        when        : (envCfg.when ?: defaultConditionFor(name)).toString(),
+        smoke       : smoke,
+        autoPromote : envCfg.autoPromote ? envCfg.autoPromote as Boolean : false,
+        approval    : approval,
+        kubeContext : envCfg.context ?: envCfg.kubeContext,
+        kubeconfig  : envCfg.kubeconfig,
+        wait        : envCfg.wait == null ? true : envCfg.wait as Boolean,
+        atomic      : envCfg.atomic == null ? true : envCfg.atomic as Boolean,
+        timeout     : (envCfg.timeout ?: appCfg.timeout ?: '10m').toString()
+    ]
+}
+
+@NonCPS
+private String defaultConditionFor(String envName) {
+    switch (envName) {
+        case 'dev':
+            return 'branch=main & !pr'
+        case 'stg':
+        case 'stage':
+        case 'staging':
+            return 'branch=main & !pr'
+        case 'prd':
+        case 'prod':
+        case 'production':
+            return 'tag=^v[0-9].*'
+        default:
+            return '!pr'
+    }
+}
+
+@NonCPS
+private Map normalizeSmoke(Object raw) {
+    if (!raw) return [:]
+    if (raw instanceof Map) {
+        Map cfg = raw as Map
+        Map result = [:]
+        if (cfg.url) result.url = cfg.url.toString()
+        if (cfg.script) result.script = cfg.script.toString()
+        if (cfg.command) result.command = cfg.command.toString()
+        if (cfg.cmd) result.command = cfg.cmd.toString()
+        result.retries = (cfg.retries ?: cfg.retry ?: 0) as Integer
+        result.delay = (cfg.delay ?: 5).toString()
+        result.timeout = (cfg.timeout ?: cfg.maxTime ?: '60s').toString()
+        return result
+    }
+    String value = raw.toString()
+    if (value.startsWith('http')) {
+        return [url: value, retries: 0, delay: '5', timeout: '60s']
+    }
+    return [script: value, retries: 0, delay: '5', timeout: '60s']
+}
+
+@NonCPS
+private Map normalizeApproval(Object raw) {
+    if (!raw) return [:]
+    if (raw instanceof Map) {
+        Map cfg = raw as Map
+        return [
+            message  : (cfg.message ?: 'Approval required').toString(),
+            submitter: cfg.submitter ?: cfg.user ?: cfg.users,
+            ok       : (cfg.ok ?: 'Approve').toString()
+        ]
+    }
+    String value = raw.toString()
+    String submitter = null
+    if (value.startsWith('user:')) {
+        submitter = value.substring('user:'.length())
+    }
+    return [
+        message  : "Approval required (${value})",
+        submitter: submitter,
+        ok       : 'Approve'
+    ]
+}
+
+// --------------------------- HELPERS -----------------------------------------
+private String locateConfig() {
+    if (fileExists(PRIMARY_CONFIG)) return PRIMARY_CONFIG
+    if (fileExists(LEGACY_CONFIG)) return LEGACY_CONFIG
+    return null
+}
+
+private String determineHome(String ws) {
+    if (env.HOME?.trim() && env.HOME != '/') {
+        return env.HOME
+    }
+    return ws
+}
+
+private String resolveCommitSha() {
+    if (env.GIT_COMMIT?.trim()) {
+        return env.GIT_COMMIT.trim()
+    }
+    return sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+}
+
+private String resolveImageTag(Map imageCfg, Map state) {
+    Map ctx = templateContext(state)
+    if (imageCfg.tagTemplate) {
+        return renderTemplate(imageCfg.tagTemplate.toString(), ctx)
+    }
+    if (state.tagName?.trim()) {
+        return state.tagName.trim()
+    }
+    switch (imageCfg.tagStrategy) {
+        case 'commit':
+            return state.commitShort ?: state.commit
+        case 'build':
+            if (ctx.branchSlug && ctx.buildNumber) {
+                return "${ctx.branchSlug}-${ctx.buildNumber}"
+            }
+            return state.commitShort ?: state.commit
+        case 'branch':
+            return ctx.branchSlug ?: 'latest'
+        case 'branch-sha':
+        default:
+            String branch = ctx.branchSlug ?: 'build'
+            String sha = state.commitShort ?: state.commit
+            return "${branch}-${sha}"
+    }
+}
+
+@NonCPS
+private String sanitizeBranch(String branch) {
+    if (!branch) {
+        return ''
+    }
+    String cleaned = branch.replaceAll(/[^A-Za-z0-9_.-]+/, '-')
+    cleaned = cleaned.replaceAll(/^-+/, '').replaceAll(/-+$/, '')
+    return cleaned.toLowerCase()
+}
+
+@NonCPS
+private String parentDir(String path) {
+    if (!path) {
+        return null
+    }
+    int idx = path.lastIndexOf('/')
+    if (idx <= 0) {
+        return null
+    }
+    return path.substring(0, idx)
+}
+
+@NonCPS
+private Map templateContext(Map state) {
+    return [
+        commit     : state.commit ?: '',
+        commitShort: state.commitShort ?: '',
+        branch     : state.branch ?: '',
+        branchSlug : state.branchSanitized ?: '',
+        imageTag   : state.imageTag ?: '',
+        buildNumber: state.buildNumber ?: '',
+        tagName    : state.tagName ?: '',
+        repository : state.repository ?: ''
+    ]
+}
+
+@NonCPS
+private String renderTemplate(String template, Map ctx) {
+    if (!template) return ''
+    String result = template
+    ctx.each { k, v ->
+        String pattern = "\\{\\{\\s*${Pattern.quote(k)}\\s*\\}\\}"
+        result = result.replaceAll(pattern, Matcher.quoteReplacement(v ?: ''))
+    }
+    return result
+}
+
+@NonCPS
+private List<String> toStringList(Object raw) {
+    List<String> list = []
+    if (raw instanceof Collection) {
+        raw.each { if (it != null) list << it.toString() }
+    } else if (raw != null) {
+        list << raw.toString()
+    }
+    return list
+}
+
+@NonCPS
+private Map<String, String> toStringMap(Object raw) {
+    Map<String, String> map = [:]
+    if (raw instanceof Map) {
+        (raw as Map).each { k, v ->
+            if (k != null && v != null) {
+                map[k.toString()] = v.toString()
+            }
+        }
+    }
+    return map
+}
+
+@NonCPS
+private List<String> mapToEnvList(Map data) {
+    if (!(data instanceof Map) || data.isEmpty()) {
+        return []
+    }
+    List<String> envList = []
+    (data as Map).each { k, v ->
+        envList << "${k}=${v}"
+    }
+    return envList
+}
+
+private List<Map> buildCredentialBindings(Map envCfg) {
+    List<Map> bindings = []
+    if (envCfg.kubeconfigCredential) {
+        bindings << [$class: 'FileBinding', credentialsId: envCfg.kubeconfigCredential, variable: (envCfg.kubeconfigEnv ?: 'KUBECONFIG')]
+    }
+    (envCfg.credentials ?: []).each { Map cred ->
+        switch (cred.type) {
+            case 'file':
+                bindings << [$class: 'FileBinding', credentialsId: cred.id, variable: cred.env]
+                break
+            case 'usernamePassword':
+                bindings << [$class: 'UsernamePasswordMultiBinding', credentialsId: cred.id, usernameVariable: cred.usernameEnv, passwordVariable: cred.passwordEnv]
+                break
+            default:
+                bindings << [$class: 'StringBinding', credentialsId: cred.id, variable: cred.env]
+                break
+        }
+    }
+    return bindings
+}
+
+private void withOptionalCredentials(List<Map> bindings, Closure body) {
+    if (bindings && !bindings.isEmpty()) {
+        withCredentials(bindings) {
+            body()
+        }
+    } else {
+        body()
+    }
+}
+
+private void awaitApproval(Map approval, String defaultMessage) {
+    if (!approval || approval.isEmpty()) {
+        return
+    }
+    String message = approval.message ?: defaultMessage
+    String ok = approval.ok ?: 'Approve'
+    if (approval.submitter) {
+        input message: message, ok: ok, submitter: approval.submitter.toString()
+    } else {
+        input message: message, ok: ok
+    }
+}
+
 // --------------------------- VERBS -------------------------------------------
-// Supported verbs (string commands):
-// - "npm \"<args>\""                  -> npm <args>
-// - "node.build"                      -> npm ci && npm run build
-// - "node.test"                       -> npm test -- --ci
-// - "gradle.build"                    -> ./gradlew build --no-daemon
-// - "gradle.test"                     -> ./gradlew test --no-daemon
-// - "gradle.publish"                  -> ./gradlew publish --no-daemon
-// - "docker.build tag=<tag> [file=.]" -> docker build -t <tag> <file>
-// - "docker.push tag=<tag>"           -> docker push <tag>
-// - "k8s.apply file=<path>"           -> kubectl apply -f <path>
-// - "sh \"<command>\""                -> raw shell
 private void runVerb(String spec) {
     spec = spec.trim()
     if (spec.startsWith('sh ')) {
@@ -191,12 +1061,20 @@ private void runVerb(String spec) {
         sh "npm ${args}"
         return
     }
+    if (spec == 'node.install') {
+        sh "npm ci"
+        return
+    }
     if (spec == 'node.build') {
-        sh "npm ci && npm run build"
+        sh "npm run build"
         return
     }
     if (spec == 'node.test') {
         sh "npm test -- --ci"
+        return
+    }
+    if (spec == 'node.lint') {
+        sh "npm run lint"
         return
     }
     if (spec == 'gradle.build') {
@@ -233,12 +1111,11 @@ private void runVerb(String spec) {
     error "Unknown verb: '${spec}'"
 }
 
-// --------------------------- UTILS -------------------------------------------
 @NonCPS
 private String unquote(String s) {
     s = s.trim()
     if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-        return s.substring(1, s.length()-1)
+        return s.substring(1, s.length() - 1)
     }
     return s
 }
@@ -249,7 +1126,7 @@ private Map parseKVs(String tail) {
     tail.trim().split(/\s+/).findAll { it.contains('=') }.each { p ->
         def i = p.indexOf('=')
         def k = p.substring(0, i).trim()
-        def v = p.substring(i+1).trim()
+        def v = p.substring(i + 1).trim()
         m[k] = unquote(v)
     }
     return m
@@ -257,16 +1134,5 @@ private Map parseKVs(String tail) {
 
 @NonCPS
 private String shellEscape(String s) {
-    // naive but safe for tags/paths without newlines
     return "'${s.replace("'", "'\"'\"'")}'"
-}
-
-private void requireApproval(String approve, String envName) {
-    // approve: "user:<id>" | "group:<name>"
-    def who = approve?.trim() ?: ''
-    input message: "Deploy '${envName}' requires approval (${who}). Proceed?", ok: "Approve"
-}
-
-private boolean shouldRun(String cond) {
-    return Helpers.matchCondition(cond, env)
 }
