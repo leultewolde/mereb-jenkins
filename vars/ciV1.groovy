@@ -358,7 +358,7 @@ private void runTerraform(Map tfCfg) {
                     Map<String, String> combinedVars = [:]
                     combinedVars.putAll(envCfg.vars ?: [:])
                     String kubeEnvVar = envCfg.kubeconfigEnv ?: 'KUBECONFIG'
-                    String kubePath = env[kubeEnvVar]
+                    String kubePath = env.get(kubeEnvVar)
                     if (kubePath?.trim() && !combinedVars.containsKey('kubeconfig_path')) {
                         combinedVars['kubeconfig_path'] = kubePath.trim()
                     }
