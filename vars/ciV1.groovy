@@ -52,7 +52,7 @@ def call(Map args = [:]) {
         // Create the gradle dir using the resolved path (no \"$VAR\" expansion)
         sh "mkdir -p '${gradleHome}'"
 
-        withEnv(baseEnv) {
+        withEnv(envBlock) {
             // debug once if needed
             sh 'echo WS=$(pwd); echo HOME=$HOME; echo GRADLE_USER_HOME=$GRADLE_USER_HOME'
             sh 'chmod +x ./gradlew || true'
