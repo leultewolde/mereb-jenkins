@@ -1,5 +1,6 @@
 plugins {
     id 'groovy'
+    id 'checkstyle'
 }
 
 group = 'com.leultewolde'
@@ -18,4 +19,16 @@ dependencies {
 
 test {
     useJUnitPlatform()
+}
+
+checkstyle {
+    toolVersion = '10.17.0'
+    config = resources.text.fromFile('config/checkstyle/checkstyle.xml')
+}
+
+tasks.withType(Checkstyle).configureEach {
+    reports {
+        xml.required = false
+        html.outputLocation = layout.buildDirectory.file("reports/checkstyle/${name}.html")
+    }
 }
