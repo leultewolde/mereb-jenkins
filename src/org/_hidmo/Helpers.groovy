@@ -10,7 +10,10 @@ class Helpers implements Serializable {
             return true
         }
 
-        def parts = cond.split(/&/)*.trim()
+        List<String> parts = []
+        for (String segment : cond.split(/&/)) {
+            parts << segment.trim()
+        }
         boolean ok = true
         for (p in parts) {
             if (p == 'pr') {
