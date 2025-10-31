@@ -49,18 +49,25 @@ def call(Map args = [:]) {
         state.branchSanitized = sanitizeBranch(state.branch)
         state.buildNumber = (env.BUILD_NUMBER ?: '').toString()
         state.tagName = env.TAG_NAME ?: ''
-        state.repository = cfg.image.repository
+        state.repository = ''
+        state.imageTag = ''
+        state.imageRef = ''
 
-        state.imageTag = resolveImageTag(cfg.image, state)
-        state.imageRef = "${cfg.image.repository}:${state.imageTag}"
+        if (cfg.image.enabled) {
+            state.repository = cfg.image.repository
+            state.imageTag = resolveImageTag(cfg.image, state)
+            state.imageRef = "${cfg.image.repository}:${state.imageTag}"
+        }
 
         List<String> exportedEnv = []
         exportedEnv.addAll(baseEnv)
         exportedEnv << "HOME=${determineHome(ws)}"
         exportedEnv << "GRADLE_USER_HOME=${ws}/.gradle"
-        exportedEnv << "IMAGE_REPOSITORY=${cfg.image.repository}"
-        exportedEnv << "IMAGE_TAG=${state.imageTag}"
-        exportedEnv << "IMAGE_REF=${state.imageRef}"
+        if (cfg.image.enabled) {
+            exportedEnv << "IMAGE_REPOSITORY=${cfg.image.repository}"
+            exportedEnv << "IMAGE_TAG=${state.imageTag}"
+            exportedEnv << "IMAGE_REF=${state.imageRef}"
+        }
 
         sh "mkdir -p '${ws}/.gradle'"
 
@@ -71,34 +78,38 @@ def call(Map args = [:]) {
             runBuildStages(cfg.buildStages)
             runMatrix(cfg.matrix)
 
-            stage('Docker Build') {
-                dockerBuild(cfg.image, state)
-            }
-
-            if (shouldGenerateSbom(cfg)) {
-                stage('SBOM') {
-                    generateSbom(cfg, state)
+            if (cfg.image.enabled) {
+                stage('Docker Build') {
+                    dockerBuild(cfg.image, state)
                 }
-            }
 
-            if (shouldScan(cfg)) {
-                stage('Vulnerability Scan') {
-                    scanImage(cfg, state)
+                if (shouldGenerateSbom(cfg)) {
+                    stage('SBOM') {
+                        generateSbom(cfg, state)
+                    }
                 }
-            }
 
-            if (shouldPush(cfg)) {
-                stage('Docker Push') {
-                    dockerPush(cfg, state)
+                if (shouldScan(cfg)) {
+                    stage('Vulnerability Scan') {
+                        scanImage(cfg, state)
+                    }
+                }
+
+                if (shouldPush(cfg)) {
+                    stage('Docker Push') {
+                        dockerPush(cfg, state)
+                    }
+                } else {
+                    echo "Docker push skipped by condition '${cfg.image.push.when}'"
+                }
+
+                if (shouldSign(cfg)) {
+                    stage('Sign Image') {
+                        signImage(cfg, state)
+                    }
                 }
             } else {
-                echo "Docker push skipped by condition '${cfg.image.push.when}'"
-            }
-
-            if (shouldSign(cfg)) {
-                stage('Sign Image') {
-                    signImage(cfg, state)
-                }
+                echo "Docker stages disabled for this pipeline; skipping build/push/sign."
             }
 
             runTerraform(cfg.terraform)
@@ -213,6 +224,9 @@ private void dockerPush(Map cfg, Map state) {
 
 // --------------------------- SBOM / SCAN / SIGN ------------------------------
 private boolean shouldGenerateSbom(Map cfg) {
+    if (!(cfg.image.enabled as Boolean)) {
+        return false
+    }
     return cfg.sbom.enabled as Boolean
 }
 
@@ -236,6 +250,9 @@ private void generateSbom(Map cfg, Map state) {
 }
 
 private boolean shouldScan(Map cfg) {
+    if (!(cfg.image.enabled as Boolean)) {
+        return false
+    }
     return cfg.scan.enabled as Boolean
 }
 
@@ -252,6 +269,9 @@ private void scanImage(Map cfg, Map state) {
 }
 
 private boolean shouldPush(Map cfg) {
+    if (!(cfg.image.enabled as Boolean)) {
+        return false
+    }
     def pushCfg = cfg.image.push
     if (!(pushCfg.enabled as Boolean)) {
         return false
@@ -261,6 +281,9 @@ private boolean shouldPush(Map cfg) {
 
 private boolean shouldSign(Map cfg) {
     Map signing = cfg.signing
+    if (!(cfg.image.enabled as Boolean)) {
+        return false
+    }
     if (!(signing.enabled as Boolean)) {
         return false
     }
@@ -440,8 +463,12 @@ private void deployEnvironments(Map cfg, Map state) {
         stage("Deploy ${envCfg.displayName}") {
             Map setCombined = [:]
             setCombined.putAll(envCfg.set ?: [:])
-            setCombined['image.repository'] = state.repository
-            setCombined['image.tag'] = state.imageTag
+            if (cfg.image.enabled && state.repository) {
+                setCombined['image.repository'] = state.repository
+            }
+            if (cfg.image.enabled && state.imageTag) {
+                setCombined['image.tag'] = state.imageTag
+            }
 
             helmDeploy(
                 release    : envCfg.release,
@@ -560,7 +587,36 @@ private List<Map> computeBuildStages(String preset, Object buildCfgRaw) {
 
 private Map normalizeImage(Map raw) {
     Map app = raw.app instanceof Map ? raw.app : [:]
-    Map imageRaw = raw.image instanceof Map ? raw.image : [:]
+    Object imageSection = raw.image
+    Map imageRaw = imageSection instanceof Map ? imageSection : [:]
+
+    boolean enabled = true
+    if (imageSection instanceof Boolean) {
+        enabled = imageSection as Boolean
+    } else if (imageRaw.containsKey('enabled')) {
+        enabled = imageRaw.enabled as Boolean
+    }
+
+    Map pushRaw = imageRaw.push instanceof Map ? imageRaw.push : [:]
+
+    if (!enabled) {
+        return [
+            enabled    : false,
+            repository : '',
+            context    : (imageRaw.context ?: '.').toString(),
+            dockerfile : (imageRaw.dockerfile ?: 'Dockerfile').toString(),
+            buildArgs  : toStringMap(imageRaw.buildArgs),
+            buildFlags : toStringList(imageRaw.buildFlags),
+            platforms  : toStringList(imageRaw.platforms),
+            tagStrategy: (imageRaw.tagStrategy ?: 'branch-sha').toString(),
+            tagTemplate: imageRaw.tagTemplate ?: imageRaw.tag,
+            push       : [
+                enabled  : false,
+                when     : (pushRaw.when ?: imageRaw.pushWhen ?: '!pr').toString(),
+                extraTags: toStringList(pushRaw.extraTags ?: imageRaw.extraTags)
+            ]
+        ]
+    }
 
     String repository = (imageRaw.repository ?: '').toString().trim()
     if (!repository) {
@@ -577,9 +633,8 @@ private Map normalizeImage(Map raw) {
         }
     }
 
-    Map pushRaw = imageRaw.push instanceof Map ? imageRaw.push : [:]
-
     Map imageCfg = [
+        enabled    : true,
         repository : repository,
         context    : (imageRaw.context ?: '.').toString(),
         dockerfile : (imageRaw.dockerfile ?: 'Dockerfile').toString(),
@@ -622,12 +677,15 @@ private Map normalizeScan(Object raw) {
 private Map normalizeSigning(Object raw, Map imageCfg) {
     Map cfg = raw instanceof Map ? raw : [:]
     boolean enabled = cfg.enabled == null ? false : cfg.enabled as Boolean
+    if (!(imageCfg.enabled as Boolean)) {
+        enabled = false
+    }
     return [
         enabled : enabled,
         when    : (cfg.when ?: imageCfg.push.when).toString(),
         key     : cfg.key,
         keyless : cfg.keyless ? cfg.keyless as Boolean : false,
-        identity: (cfg.identity ?: imageCfg.repository).toString(),
+        identity: (cfg.identity ?: (imageCfg.repository ?: '')).toString(),
         flags   : toStringList(cfg.flags),
         env     : toStringMap(cfg.env)
     ]
