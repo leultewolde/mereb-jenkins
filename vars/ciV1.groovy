@@ -114,6 +114,7 @@ def call(Map args = [:]) {
                 }
 
                 runTerraform(cfg.terraform)
+                handleRelease(cfg.release, state)
                 deployEnvironments(cfg, state)
             }
         } finally {
@@ -413,6 +414,142 @@ private void runTerraform(Map tfCfg) {
     }
 }
 
+private void handleRelease(Map releaseCfg, Map state) {
+    Map autoTag = releaseCfg?.autoTag ?: [:]
+    if (!(autoTag.enabled as Boolean)) {
+        return
+    }
+    if (!Helpers.matchCondition(autoTag.when as String, env)) {
+        echo "Release auto-tag skipped by condition '${autoTag.when}'"
+        return
+    }
+
+    stage(autoTag.stageName ?: 'Create Release Tag') {
+        if ((env.TAG_NAME ?: '').trim()) {
+            echo "Tag build detected (${env.TAG_NAME}); skipping auto-tag."
+            return
+        }
+
+        String treeStatus = sh(script: 'git status --porcelain', returnStdout: true).trim()
+        if (treeStatus) {
+            error "Working tree contains uncommitted changes; refusing to create a release tag."
+        }
+
+        if (autoTag.skipIfTagged as Boolean) {
+            String currentTag = sh(script: 'git describe --tags --exact-match 2>/dev/null || true', returnStdout: true).trim()
+            if (currentTag) {
+                echo "HEAD already tagged with '${currentTag}'; skipping auto-tag."
+                return
+            }
+        }
+
+        List<String> envVars = mapToEnvList(autoTag.env ?: [:])
+        Closure action = {
+            createAndPushTag(autoTag, state)
+        }
+        if (!envVars.isEmpty()) {
+            withEnv(envVars, action)
+        } else {
+            action()
+        }
+    }
+}
+
+private void createAndPushTag(Map autoTag, Map state) {
+    String remote = (autoTag.remote ?: 'origin').toString()
+    String prefix = (autoTag.prefix ?: 'v').toString()
+    String bump = (autoTag.bump ?: 'patch').toString()
+    boolean annotated = autoTag.annotated as Boolean
+    boolean push = autoTag.push as Boolean
+    String message = (autoTag.message ?: "Automated release for ${state.commitShort}").toString()
+    String user = (autoTag.gitUser ?: 'Mereb CI').toString()
+    String email = (autoTag.gitEmail ?: 'ci@mereb.local').toString()
+
+    sh "git fetch --tags --quiet ${shellEscape(remote)} || true"
+
+    String pattern = "${prefix}[0-9]*"
+    String latest = sh(script: "git tag --list ${shellEscape(pattern)} --sort=-version:refname | head -n1", returnStdout: true).trim()
+    Map next = computeNextTag(prefix, latest, bump)
+    String nextTag = (next.tag ?: '').toString()
+    if (!nextTag?.trim()) {
+        error 'Failed to compute next release tag.'
+    }
+
+    String exists = sh(script: "git rev-parse --quiet --verify refs/tags/${shellEscape(nextTag)} >/dev/null 2>&1 && echo yes || true", returnStdout: true).trim()
+    if ('yes'.equalsIgnoreCase(exists)) {
+        echo "Tag ${nextTag} already exists; skipping auto-tag."
+        return
+    }
+
+    sh "git config user.name ${shellEscape(user)}"
+    sh "git config user.email ${shellEscape(email)}"
+
+    if (annotated) {
+        sh "git tag -a ${shellEscape(nextTag)} -m ${shellEscape(message)}"
+    } else {
+        sh "git tag ${shellEscape(nextTag)}"
+    }
+
+    if (push) {
+        sh "git push ${shellEscape(remote)} ${shellEscape(nextTag)}"
+    } else {
+        echo "Auto-tag push disabled; created local tag ${nextTag}"
+    }
+
+    env.RELEASE_TAG = nextTag
+    echo "Created release tag ${nextTag}"
+}
+
+@NonCPS
+private Map computeNextTag(String prefix, String latest, String bump) {
+    int major = 0
+    int minor = 0
+    int patch = 0
+    boolean haveLatest = latest?.trim()
+
+    if (haveLatest) {
+        String base = latest.startsWith(prefix) ? latest.substring(prefix.length()) : latest
+        List<String> parts = base.tokenize('.')
+        major = parseIntOr(parts, 0, 0)
+        minor = parseIntOr(parts, 1, 0)
+        patch = parseIntOr(parts, 2, 0)
+    }
+
+    switch (bump) {
+        case 'major':
+            major += 1
+            minor = 0
+            patch = 0
+            break
+        case 'minor':
+            minor += 1
+            patch = 0
+            break
+        default:
+            patch += 1
+            break
+    }
+
+    String tag = "${prefix}${major}.${minor}.${patch}"
+    return [tag: tag, major: major, minor: minor, patch: patch]
+}
+
+@NonCPS
+private int parseIntOr(List parts, int index, int fallback) {
+    if (index >= (parts?.size() ?: 0)) {
+        return fallback
+    }
+    String raw = parts[index]?.toString()
+    if (!raw) {
+        return fallback
+    }
+    try {
+        return Integer.parseInt(raw)
+    } catch (NumberFormatException ignore) {
+        return fallback
+    }
+}
+
 private void runTerraformCommands(String binary, Map tfCfg, Map envCfg, Map backend, Map vars) {
     runTerraformInit(binary, tfCfg.initArgs, envCfg.initArgs, backend)
     if (envCfg.workspace) {
@@ -586,6 +723,7 @@ private Map normalizeConfig(Map raw) {
     cfg.scan = normalizeScan(raw.scan)
     cfg.signing = normalizeSigning(raw.signing, cfg.image)
     cfg.terraform = normalizeTerraform(raw.terraform)
+    cfg.release = normalizeRelease(raw.release)
     cfg.deploy = normalizeDeploy(raw)
 
     return cfg
@@ -781,6 +919,45 @@ private Map normalizeTerraform(Object raw) {
     ]
     return cfg
 }
+
+private Map normalizeRelease(Object raw) {
+    Map section = raw instanceof Map ? raw : [:]
+    Map autoTag = normalizeReleaseAutoTag(section.autoTag)
+
+    return [
+        autoTag: autoTag
+    ]
+}
+
+@NonCPS
+private Map normalizeReleaseAutoTag(Object raw) {
+    Map data = raw instanceof Map ? raw : [:]
+    if (data.isEmpty()) {
+        return [enabled: false]
+    }
+    boolean enabled = data.containsKey('enabled') ? (data.enabled as Boolean) : true
+    String bumpValue = (data.bump ?: 'patch').toString().toLowerCase()
+    if (!(bumpValue in ['major', 'minor', 'patch'])) {
+        bumpValue = 'patch'
+    }
+
+    return [
+        enabled      : enabled,
+        when         : (data.when ?: '!pr').toString(),
+        stageName    : (data.stageName ?: 'Create Release Tag').toString(),
+        prefix       : (data.prefix ?: 'v').toString(),
+        bump         : bumpValue,
+        remote       : (data.remote ?: 'origin').toString(),
+        gitUser      : (data.gitUser ?: data.user)?.toString(),
+        gitEmail     : (data.gitEmail ?: data.email)?.toString(),
+        message      : data.message?.toString(),
+        annotated    : data.containsKey('annotated') ? data.annotated as Boolean : (data.containsKey('annotate') ? data.annotate as Boolean : false),
+        push         : data.containsKey('push') ? data.push as Boolean : true,
+        skipIfTagged : data.containsKey('skipIfTagged') ? data.skipIfTagged as Boolean : true,
+        env          : toStringMap(data.env)
+    ]
+}
+
 
 @NonCPS
 private Map normalizeTerraformEnvironment(String name, Object raw) {
