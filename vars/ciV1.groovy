@@ -397,7 +397,14 @@ private void runTerraform(Map tfCfg) {
                             runTerraformCommands(binary, tfCfg, envCfg, backend, combinedVars)
                         }
                     }
-                    commands()
+                    String envPath = envCfg.path ?: '.'
+                    if (envPath && envPath != '.' && envPath != './') {
+                        dir(envPath) {
+                            commands()
+                        }
+                    } else {
+                        commands()
+                    }
                 }
             }
 
@@ -800,6 +807,7 @@ private Map normalizeTerraformEnvironment(String name, Object raw) {
         applyArgs           : toStringList(data.applyArgs),
         backend             : backendMap,
         planOut             : (data.planOut ?: "tfplan-${name}").toString(),
+        path                : data.path?.toString(),
         apply               : data.containsKey('apply') ? data.apply as Boolean : true,
         autoApply           : data.containsKey('autoApply') ? data.autoApply as Boolean : true,
         workspace           : data.workspace?.toString(),
