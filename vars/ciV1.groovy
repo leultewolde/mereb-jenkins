@@ -69,51 +69,55 @@ def call(Map args = [:]) {
             exportedEnv << "IMAGE_REF=${state.imageRef}"
         }
 
-        sh "mkdir -p '${ws}/.gradle'"
+        try {
+            sh "mkdir -p '${ws}/.gradle'"
 
-        withEnv(exportedEnv) {
-            checkout scm
-            sh 'chmod +x ./gradlew || true'
+            withEnv(exportedEnv) {
+                checkout scm
+                sh 'chmod +x ./gradlew || true'
 
-            runBuildStages(cfg.buildStages)
-            runMatrix(cfg.matrix)
+                runBuildStages(cfg.buildStages)
+                runMatrix(cfg.matrix)
 
-            if (cfg.image.enabled) {
-                stage('Docker Build') {
-                    dockerBuild(cfg.image, state)
-                }
-
-                if (shouldGenerateSbom(cfg)) {
-                    stage('SBOM') {
-                        generateSbom(cfg, state)
+                if (cfg.image.enabled) {
+                    stage('Docker Build') {
+                        dockerBuild(cfg.image, state)
                     }
-                }
 
-                if (shouldScan(cfg)) {
-                    stage('Vulnerability Scan') {
-                        scanImage(cfg, state)
+                    if (shouldGenerateSbom(cfg)) {
+                        stage('SBOM') {
+                            generateSbom(cfg, state)
+                        }
                     }
-                }
 
-                if (shouldPush(cfg)) {
-                    stage('Docker Push') {
-                        dockerPush(cfg, state)
+                    if (shouldScan(cfg)) {
+                        stage('Vulnerability Scan') {
+                            scanImage(cfg, state)
+                        }
+                    }
+
+                    if (shouldPush(cfg)) {
+                        stage('Docker Push') {
+                            dockerPush(cfg, state)
+                        }
+                    } else {
+                        echo "Docker push skipped by condition '${cfg.image.push.when}'"
+                    }
+
+                    if (shouldSign(cfg)) {
+                        stage('Sign Image') {
+                            signImage(cfg, state)
+                        }
                     }
                 } else {
-                    echo "Docker push skipped by condition '${cfg.image.push.when}'"
+                    echo "Docker stages disabled for this pipeline; skipping build/push/sign."
                 }
 
-                if (shouldSign(cfg)) {
-                    stage('Sign Image') {
-                        signImage(cfg, state)
-                    }
-                }
-            } else {
-                echo "Docker stages disabled for this pipeline; skipping build/push/sign."
+                runTerraform(cfg.terraform)
+                deployEnvironments(cfg, state)
             }
-
-            runTerraform(cfg.terraform)
-            deployEnvironments(cfg, state)
+        } finally {
+            cleanupWorkspace(ws)
         }
     }
 
@@ -141,6 +145,24 @@ def call(Map args = [:]) {
             checkout scm
             runCore()
         }
+    }
+}
+
+private void cleanupWorkspace(String ws) {
+    try {
+        echo "Cleaning workspace..."
+        cleanWs deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true
+    } catch (MissingMethodError | NoSuchMethodError ignore) {
+        echo "cleanWs step unavailable; falling back to deleteDir()"
+        if (ws?.trim()) {
+            dir(ws) {
+                deleteDir()
+            }
+        } else {
+            deleteDir()
+        }
+    } catch (Throwable t) {
+        echo "Workspace cleanup failed: ${t.message}"
     }
 }
 
