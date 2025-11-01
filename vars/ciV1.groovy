@@ -408,6 +408,9 @@ private void runTerraform(Map tfCfg) {
 
 private void runTerraformCommands(String binary, Map tfCfg, Map envCfg, Map backend, Map vars) {
     runTerraformInit(binary, tfCfg.initArgs, envCfg.initArgs, backend)
+    if (envCfg.workspace) {
+        selectTerraformWorkspace(binary, envCfg.workspace.toString())
+    }
     String planOut = envCfg.planOut
     runTerraformPlan(binary, tfCfg.planArgs, envCfg.planArgs, envCfg.varFiles, vars, planOut)
     if (envCfg.apply as Boolean) {
@@ -427,6 +430,16 @@ private void runTerraformInit(String binary, List<String> globalArgs, List<Strin
         cmd << "-backend-config=${shellEscape("${k}=${v}")}"
     }
     sh cmd.join(' ')
+}
+
+private void selectTerraformWorkspace(String binary, String workspace) {
+    if (!workspace?.trim()) {
+        return
+    }
+    String bin = shellEscape(binary)
+    String ws = shellEscape(workspace)
+    String selectCmd = "${bin} workspace select ${ws} || ${bin} workspace new ${ws}"
+    sh selectCmd
 }
 
 private void runTerraformPlan(String binary, List<String> globalArgs, List<String> envArgs, List<String> varFiles, Map vars, String planOut) {
@@ -789,6 +802,7 @@ private Map normalizeTerraformEnvironment(String name, Object raw) {
         planOut             : (data.planOut ?: "tfplan-${name}").toString(),
         apply               : data.containsKey('apply') ? data.apply as Boolean : true,
         autoApply           : data.containsKey('autoApply') ? data.autoApply as Boolean : true,
+        workspace           : data.workspace?.toString(),
         approval            : approval
     ]
 }
