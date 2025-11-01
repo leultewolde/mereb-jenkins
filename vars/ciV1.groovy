@@ -152,7 +152,7 @@ private void cleanupWorkspace(String ws) {
     try {
         echo "Cleaning workspace..."
         cleanWs deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true
-    } catch (MissingMethodError | NoSuchMethodError ignore) {
+    } catch (MissingMethodException | NoSuchMethodError ignore) {
         echo "cleanWs step unavailable; falling back to deleteDir()"
         if (ws?.trim()) {
             dir(ws) {
