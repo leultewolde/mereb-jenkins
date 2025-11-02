@@ -277,7 +277,14 @@ private boolean shouldGenerateSbom(Map cfg) {
     if (!(cfg.image.enabled as Boolean)) {
         return false
     }
-    return cfg.sbom.enabled as Boolean
+    if (!(cfg.sbom.enabled as Boolean)) {
+        return false
+    }
+    if (!commandAvailable('syft')) {
+        echo "Skipping SBOM generation because 'syft' is not available on PATH."
+        return false
+    }
+    return true
 }
 
 private void generateSbom(Map cfg, Map state) {
@@ -303,7 +310,14 @@ private boolean shouldScan(Map cfg) {
     if (!(cfg.image.enabled as Boolean)) {
         return false
     }
-    return cfg.scan.enabled as Boolean
+    if (!(cfg.scan.enabled as Boolean)) {
+        return false
+    }
+    if (!commandAvailable('grype')) {
+        echo "Skipping vulnerability scan because 'grype' is not available on PATH."
+        return false
+    }
+    return true
 }
 
 private void scanImage(Map cfg, Map state) {
@@ -1255,6 +1269,15 @@ private boolean terraformExecutableExists(String binary) {
     } else {
         script = "command -v ${shellEscape(binary)} >/dev/null 2>&1 && echo yes || echo no"
     }
+    return sh(script: script, returnStdout: true).trim() == 'yes'
+}
+
+private boolean commandAvailable(String binary) {
+    if (!binary?.trim()) {
+        return false
+    }
+    String escaped = shellEscape(binary)
+    String script = "command -v ${escaped} >/dev/null 2>&1 && echo yes || echo no"
     return sh(script: script, returnStdout: true).trim() == 'yes'
 }
 
