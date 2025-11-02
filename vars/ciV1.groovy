@@ -563,16 +563,20 @@ private int parseIntOr(List parts, int index, int fallback) {
 }
 
 private void runTerraformCommands(String binary, Map tfCfg, Map envCfg, Map backend, Map vars) {
-    runTerraformInit(binary, tfCfg.initArgs, envCfg.initArgs, backend)
-    if (envCfg.workspace) {
-        selectTerraformWorkspace(binary, envCfg.workspace.toString())
-    }
     String planOut = envCfg.planOut
-    runTerraformPlan(binary, tfCfg.planArgs, envCfg.planArgs, envCfg.varFiles, vars, planOut)
-    if (envCfg.apply as Boolean) {
-        runTerraformApply(binary, tfCfg.applyArgs, envCfg.applyArgs, planOut, envCfg.autoApply as Boolean)
-    } else {
-        echo "Terraform apply skipped for ${envCfg.displayName}"
+    try {
+        runTerraformInit(binary, tfCfg.initArgs, envCfg.initArgs, backend)
+        if (envCfg.workspace) {
+            selectTerraformWorkspace(binary, envCfg.workspace.toString())
+        }
+        runTerraformPlan(binary, tfCfg.planArgs, envCfg.planArgs, envCfg.varFiles, vars, planOut)
+        if (envCfg.apply as Boolean) {
+            runTerraformApply(binary, tfCfg.applyArgs, envCfg.applyArgs, planOut, envCfg.autoApply as Boolean)
+        } else {
+            echo "Terraform apply skipped for ${envCfg.displayName}"
+        }
+    } finally {
+        cleanupTerraformArtifacts(planOut)
     }
 }
 
@@ -629,6 +633,16 @@ private void runTerraformApply(String binary, List<String> globalArgs, List<Stri
         cmd << shellEscape(planOut)
     }
     sh cmd.join(' ')
+}
+
+private void cleanupTerraformArtifacts(String planOut) {
+    if (planOut?.trim()) {
+        sh "rm -f ${shellEscape(planOut)}"
+    }
+    sh "rm -rf .terraform"
+    if (fileExists('.terraform.lock.hcl')) {
+        sh "git checkout -- .terraform.lock.hcl || true"
+    }
 }
 
 // --------------------------- DEPLOY ------------------------------------------
