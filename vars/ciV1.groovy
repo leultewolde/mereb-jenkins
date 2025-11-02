@@ -1,6 +1,8 @@
 import groovy.transform.Field
 import java.util.regex.Matcher
 import java.util.regex.Pattern
+import java.net.URI
+import java.net.URLEncoder
 
 import org._hidmo.Helpers
 
@@ -448,14 +450,17 @@ private void handleRelease(Map releaseCfg, Map state) {
         }
 
         List<String> envVars = mapToEnvList(autoTag.env ?: [:])
-        Closure action = {
+        Closure tagAction = {
             createAndPushTag(autoTag, state)
         }
-        if (!envVars.isEmpty()) {
-            withEnv(envVars, action)
-        } else {
-            action()
+        Closure action = {
+            if (!envVars.isEmpty()) {
+                withEnv(envVars, tagAction)
+            } else {
+                tagAction()
+            }
         }
+        withReleaseCredentials(autoTag, action)
     }
 }
 
@@ -967,6 +972,8 @@ private Map normalizeReleaseAutoTag(Object raw) {
         bumpValue = 'patch'
     }
 
+    Map credential = normalizeReleaseCredential(data)
+
     return [
         enabled      : enabled,
         when         : (data.when ?: '!pr').toString(),
@@ -982,8 +989,31 @@ private Map normalizeReleaseAutoTag(Object raw) {
         skipIfTagged : data.containsKey('skipIfTagged') ? data.skipIfTagged as Boolean : true,
         clean        : data.containsKey('clean') ? data.clean as Boolean : true,
         allowDirty   : data.containsKey('allowDirty') ? data.allowDirty as Boolean : false,
+        credential   : credential,
         env          : toStringMap(data.env)
     ]
+}
+
+@NonCPS
+private Map normalizeReleaseCredential(Map data) {
+    Map node = [:]
+    if (data.credential instanceof Map) {
+        node.putAll(data.credential as Map)
+    }
+    String id = (data.credentialId ?: node.id)?.toString()
+    if (!id) {
+        return [:]
+    }
+    String type = (data.credentialType ?: node.type ?: 'usernamePassword').toString()
+    Map credential = [
+        id         : id,
+        type       : type,
+        usernameEnv: (data.usernameEnv ?: node.usernameEnv ?: 'GIT_USERNAME').toString(),
+        passwordEnv: (data.passwordEnv ?: node.passwordEnv ?: 'GIT_PASSWORD').toString(),
+        tokenEnv   : (data.tokenEnv ?: node.tokenEnv ?: 'GIT_TOKEN').toString(),
+        tokenUser  : (data.tokenUser ?: node.tokenUser ?: 'x-access-token').toString()
+    ]
+    return credential
 }
 
 
@@ -1583,4 +1613,90 @@ private Map parseKVs(String tail) {
 @NonCPS
 private String shellEscape(String s) {
     return "'${s.replace("'", "'\"'\"'")}'"
+}
+private void withReleaseCredentials(Map autoTag, Closure body) {
+    Map cred = autoTag?.credential ?: [:]
+    if (!cred.id) {
+        body()
+        return
+    }
+
+    String remote = (autoTag.remote ?: 'origin').toString()
+    String originalUrl = ''
+    boolean hasRemote = true
+    try {
+        originalUrl = sh(script: "git remote get-url ${shellEscape(remote)}", returnStdout: true).trim()
+    } catch (Exception ignored) {
+        hasRemote = false
+    }
+
+    Closure restore = {
+        if (hasRemote && originalUrl) {
+            sh "git remote set-url ${shellEscape(remote)} ${shellEscape(originalUrl)}"
+        }
+    }
+
+    switch ((cred.type ?: 'usernamePassword').toString()) {
+        case 'string':
+            String tokenEnv = cred.tokenEnv ?: 'GIT_TOKEN'
+            String tokenUser = cred.tokenUser ?: 'x-access-token'
+            withCredentials([string(credentialsId: cred.id, variable: tokenEnv)]) {
+                if (hasRemote && originalUrl) {
+                    String updated = injectCredentialsIntoUrl(originalUrl, tokenUser, env[tokenEnv] ?: '')
+                    sh "git remote set-url ${shellEscape(remote)} ${shellEscape(updated)}"
+                }
+                try {
+                    body()
+                } finally {
+                    restore()
+                }
+            }
+            break
+        default:
+            String userEnv = cred.usernameEnv ?: 'GIT_USERNAME'
+            String passEnv = cred.passwordEnv ?: 'GIT_PASSWORD'
+            withCredentials([usernamePassword(credentialsId: cred.id, usernameVariable: userEnv, passwordVariable: passEnv)]) {
+                if (hasRemote && originalUrl) {
+                    String updated = injectCredentialsIntoUrl(originalUrl, env[userEnv] ?: '', env[passEnv] ?: '')
+                    sh "git remote set-url ${shellEscape(remote)} ${shellEscape(updated)}"
+                }
+                try {
+                    body()
+                } finally {
+                    restore()
+                }
+            }
+            break
+    }
+}
+
+private String injectCredentialsIntoUrl(String remoteUrl, String username, String password) {
+    if (!remoteUrl) {
+        return remoteUrl
+    }
+    if (!(remoteUrl.startsWith('http://') || remoteUrl.startsWith('https://'))) {
+        return remoteUrl
+    }
+    try {
+        URI uri = new URI(remoteUrl)
+        String userInfo
+        if (password == null || password.isEmpty()) {
+            userInfo = URLEncoder.encode(username ?: '', 'UTF-8')
+        } else {
+            userInfo = "${URLEncoder.encode(username ?: '', 'UTF-8')}:${URLEncoder.encode(password, 'UTF-8')}"
+        }
+        URI updated = new URI(
+            uri.getScheme(),
+            userInfo,
+            uri.getHost(),
+            uri.getPort(),
+            uri.getPath(),
+            uri.getQuery(),
+            uri.getFragment()
+        )
+        return updated.toString()
+    } catch (Exception e) {
+        echo "Failed to inject credentials into remote URL: ${e.message}"
+        return remoteUrl
+    }
 }
