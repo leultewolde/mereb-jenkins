@@ -797,14 +797,14 @@ private void deployEnvironments(Map cfg, Map state) {
             if (repoCredId) {
                 String userEnvVar = (repoCreds.usernameEnv ?: 'HELM_REPO_USERNAME').toString()
                 String passEnvVar = (repoCreds.passwordEnv ?: 'HELM_REPO_PASSWORD').toString()
+                Map argsWithCreds = helmArgs.clone() as Map
                 withCredentials([
                     usernamePassword(credentialsId: repoCredId, usernameVariable: userEnvVar, passwordVariable: passEnvVar)
                 ]) {
-                    Map argsWithCreds = helmArgs.clone() as Map
-                    argsWithCreds.repoUsername = env.get(userEnvVar)
-                    argsWithCreds.repoPassword = env.get(passEnvVar)
-                    helmDeploy(argsWithCreds)
+                    argsWithCreds.repoUsername = env[userEnvVar]
+                    argsWithCreds.repoPassword = env[passEnvVar]
                 }
+                helmDeploy(argsWithCreds)
             } else {
                 helmDeploy(helmArgs)
             }
