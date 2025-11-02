@@ -1,4 +1,4 @@
-import org.jenkinsci.plugins.workflow.cps.NonCPS
+import com.cloudbees.groovy.cps.NonCPS
 
 def call(Map args = [:]) {
     String release = requireArg(args, 'release')
