@@ -1862,7 +1862,7 @@ private void publishGithubReleaseInternal(Map githubCfg, Map state, Map auth, St
         String userRef = '${' + userEnv + '}'
         String passRef = '${' + passEnv + '}'
         List<String> lines = []
-        lines << '#!/bin/sh'
+        lines << '#!/usr/bin/env bash'
         lines << 'set -euo pipefail'
         lines << 'set +x'
         lines << "if [ -z \"${userRef}\" ] || [ -z \"${passRef}\" ]; then"
@@ -1882,7 +1882,7 @@ private void publishGithubReleaseInternal(Map githubCfg, Map state, Map auth, St
         String tokenEnv = auth.tokenEnv ?: 'GITHUB_TOKEN'
         String tokenRef = '${' + tokenEnv + '}'
         List<String> lines = []
-        lines << '#!/bin/sh'
+        lines << '#!/usr/bin/env bash'
         lines << 'set -euo pipefail'
         lines << 'set +x'
         lines << "if [ -z \"${tokenRef}\" ]; then"
