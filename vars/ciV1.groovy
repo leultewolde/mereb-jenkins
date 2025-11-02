@@ -1,8 +1,10 @@
 import groovy.transform.Field
+import groovy.json.JsonOutput
 import java.util.regex.Matcher
 import java.util.regex.Pattern
 import java.net.URI
 import java.net.URLEncoder
+import java.util.LinkedHashMap
 
 import org._hidmo.Helpers
 
@@ -115,9 +117,15 @@ def call(Map args = [:]) {
                     echo "Docker stages disabled for this pipeline; skipping build/push/sign."
                 }
 
-                runTerraform(cfg.terraform)
+                List<String> deferredTerraform = runTerraform(cfg.terraform, null, true)
                 handleRelease(cfg.release, state)
+                if (env.RELEASE_TAG?.trim() && deferredTerraform && !deferredTerraform.isEmpty()) {
+                    env.TAG_NAME = env.RELEASE_TAG
+                    echo "Running deferred Terraform environments after creating tag ${env.RELEASE_TAG}"
+                    runTerraform(cfg.terraform, deferredTerraform, false)
+                }
                 deployEnvironments(cfg, state)
+                publishRelease(cfg.release, state)
             }
         } finally {
             cleanupWorkspace(ws)
@@ -346,11 +354,15 @@ private void signImage(Map cfg, Map state) {
     }
 }
 
-private void runTerraform(Map tfCfg) {
-    if (!tfCfg?.enabled) return
+private List<String> runTerraform(Map tfCfg, List<String> overrideOrder = null, boolean captureDeferred = false) {
+    List<String> deferred = []
+    if (!tfCfg?.enabled) return deferred
     Map envs = tfCfg.environments ?: [:]
-    if (!envs || envs.isEmpty()) return
-    List<String> order = tfCfg.order ?: []
+    if (!envs || envs.isEmpty()) return deferred
+    List<String> order = overrideOrder ?: (tfCfg.order ?: [])
+    if (!order || order.isEmpty()) {
+        order = envs.keySet().collect { it.toString() }
+    }
     String basePath = (tfCfg.path ?: 'infra/platform/terraform').toString()
     String binary = resolveTerraformBinary(tfCfg)
     List<String> globalEnv = mapToEnvList(tfCfg.env)
@@ -362,7 +374,12 @@ private void runTerraform(Map tfCfg) {
             return
         }
         if (!Helpers.matchCondition(envCfg.when as String, env)) {
-            echo "Skip terraform '${envCfg.displayName}' — condition '${envCfg.when}' not met"
+            if (captureDeferred && shouldDeferTerraform(envCfg.when as String)) {
+                echo "Queue terraform '${envCfg.displayName}' for deferred execution — condition '${envCfg.when}' not yet met"
+                deferred << envName
+            } else {
+                echo "Skip terraform '${envCfg.displayName}' — condition '${envCfg.when}' not met"
+            }
             return
         }
 
@@ -414,6 +431,8 @@ private void runTerraform(Map tfCfg) {
             withOptionalCredentials(bindings, execute)
         }
     }
+
+    return deferred
 }
 
 private void handleRelease(Map releaseCfg, Map state) {
@@ -648,6 +667,14 @@ private void cleanupTerraformArtifacts(String planOut) {
     if (fileExists('.terraform.lock.hcl')) {
         sh "git checkout -- .terraform.lock.hcl || true"
     }
+}
+
+private boolean shouldDeferTerraform(String condition) {
+    if (!condition) {
+        return false
+    }
+    String trimmed = condition.trim()
+    return trimmed.startsWith('tag=') || trimmed.contains(' tag=')
 }
 
 // --------------------------- DEPLOY ------------------------------------------
@@ -954,9 +981,11 @@ private Map normalizeTerraform(Object raw) {
 private Map normalizeRelease(Object raw) {
     Map section = raw instanceof Map ? raw : [:]
     Map autoTag = normalizeReleaseAutoTag(section.autoTag)
+    Map github = normalizeReleaseGithub(section.github, autoTag)
 
     return [
-        autoTag: autoTag
+        autoTag: autoTag,
+        github : github
     ]
 }
 
@@ -991,6 +1020,41 @@ private Map normalizeReleaseAutoTag(Object raw) {
         allowDirty   : data.containsKey('allowDirty') ? data.allowDirty as Boolean : false,
         credential   : credential,
         env          : toStringMap(data.env)
+    ]
+}
+
+private Map normalizeReleaseGithub(Object raw, Map autoTag) {
+    Map data = raw instanceof Map ? new LinkedHashMap(raw) : [:]
+    if (data.isEmpty()) {
+        return [enabled: false]
+    }
+    boolean enabled = data.containsKey('enabled') ? data.enabled as Boolean : true
+    if (!data.containsKey('credentialId') && !(data.credential instanceof Map) && autoTag?.credential?.id) {
+        data = new LinkedHashMap(data)
+        data.credential = [
+            id         : autoTag.credential.id,
+            type       : autoTag.credential.type,
+            usernameEnv: autoTag.credential.usernameEnv,
+            passwordEnv: autoTag.credential.passwordEnv,
+            tokenEnv   : autoTag.credential.tokenEnv,
+            tokenUser  : autoTag.credential.tokenUser
+        ]
+    }
+    Map credential = normalizeReleaseCredential(data)
+
+    return [
+        enabled             : enabled,
+        when                : (data.when ?: '!pr').toString(),
+        stageName           : (data.stageName ?: 'GitHub Release').toString(),
+        repo                : data.repo?.toString(),
+        apiUrl              : (data.apiUrl ?: 'https://api.github.com').toString(),
+        draft               : data.containsKey('draft') ? data.draft as Boolean : false,
+        prerelease          : data.containsKey('prerelease') ? data.prerelease as Boolean : false,
+        generateReleaseNotes: data.containsKey('generateReleaseNotes') ? data.generateReleaseNotes as Boolean : true,
+        nameTemplate        : data.nameTemplate?.toString(),
+        bodyTemplate        : data.bodyTemplate?.toString(),
+        discussionCategory  : data.discussionCategory?.toString(),
+        credential          : credential
     ]
 }
 
@@ -1698,4 +1762,203 @@ private String urlEncode(String value) {
     } catch (Exception ignored) {
         return value ?: ''
     }
+}
+
+private void publishRelease(Map releaseCfg, Map state) {
+    Map githubCfg = releaseCfg?.github ?: [:]
+    String tag = (env.RELEASE_TAG ?: '').trim()
+    if (!(githubCfg.enabled as Boolean)) {
+        return
+    }
+    if (!tag) {
+        echo "Release tag not available; skipping GitHub release."
+        return
+    }
+    if (!Helpers.matchCondition(githubCfg.when as String, env)) {
+        echo "Skip GitHub release — condition '${githubCfg.when}' not met"
+        return
+    }
+
+    stage(githubCfg.stageName ?: 'GitHub Release') {
+        withGithubReleaseCredential(githubCfg, releaseCfg?.autoTag?.credential ?: [:]) { Map auth ->
+            publishGithubReleaseInternal(githubCfg, state, auth, tag)
+        }
+    }
+}
+
+private void withGithubReleaseCredential(Map githubCfg, Map fallbackCredential, Closure body) {
+    Map cred = githubCfg?.credential ?: [:]
+    if (!cred.id && fallbackCredential?.id) {
+        cred = fallbackCredential
+    }
+    if (!cred.id) {
+        echo "GitHub release credential not configured; skipping release."
+        return
+    }
+    String type = (cred.type ?: 'string').toString()
+    switch (type) {
+        case 'string':
+            String tokenEnv = cred.tokenEnv ?: 'GITHUB_TOKEN'
+            withCredentials([string(credentialsId: cred.id, variable: tokenEnv)]) {
+                body([mode: 'token', tokenEnv: tokenEnv])
+            }
+            break
+        default:
+            String userEnv = cred.usernameEnv ?: 'GITHUB_USERNAME'
+            String passEnv = cred.passwordEnv ?: 'GITHUB_PASSWORD'
+            withCredentials([usernamePassword(credentialsId: cred.id, usernameVariable: userEnv, passwordVariable: passEnv)]) {
+                body([mode: 'basic', usernameEnv: userEnv, passwordEnv: passEnv])
+            }
+            break
+    }
+}
+
+private void publishGithubReleaseInternal(Map githubCfg, Map state, Map auth, String tag) {
+    String apiBase = (githubCfg.apiUrl ?: 'https://api.github.com').toString().replaceAll('/+$', '')
+    String repo = determineGithubRepo(githubCfg.repo)
+    if (!repo) {
+        echo "Unable to determine GitHub repository; skipping release."
+        return
+    }
+
+    String target = (githubCfg.target ?: state.commit ?: '').toString()
+    if (!target?.trim()) {
+        target = state.commit ?: ''
+    }
+    String nameTemplate = githubCfg.nameTemplate ?: tag
+    String releaseName = renderReleaseTemplate(nameTemplate.toString(), state, tag)
+    String bodyTemplate = githubCfg.bodyTemplate?.toString()
+    String releaseBody = bodyTemplate ? renderReleaseTemplate(bodyTemplate, state, tag) : null
+    boolean draft = githubCfg.containsKey('draft') ? githubCfg.draft as Boolean : false
+    boolean prerelease = githubCfg.containsKey('prerelease') ? githubCfg.prerelease as Boolean : false
+    boolean generateNotes = githubCfg.containsKey('generateReleaseNotes') ? githubCfg.generateReleaseNotes as Boolean : true
+    String discussionCategory = githubCfg.discussionCategory?.toString()
+
+    Map payload = [
+        tag_name          : tag,
+        target_commitish  : target ?: state.commit ?: '',
+        name              : releaseName,
+        draft             : draft,
+        prerelease        : prerelease
+    ]
+    if (generateNotes) {
+        payload.generate_release_notes = true
+    }
+    if (releaseBody) {
+        payload.body = releaseBody
+    }
+    if (discussionCategory) {
+        payload.discussion_category_name = discussionCategory
+    }
+
+    String payloadJson = JsonOutput.toJson(payload)
+    String apiUrl = "${apiBase}/repos/${repo}/releases"
+    String checkUrl = "${apiBase}/repos/${repo}/releases/tags/${tag}"
+
+    String script
+    if ('basic'.equalsIgnoreCase(auth.mode as String)) {
+        String userEnv = auth.usernameEnv ?: 'GITHUB_USERNAME'
+        String passEnv = auth.passwordEnv ?: 'GITHUB_PASSWORD'
+        script = """
+#!/bin/sh
+set -euo pipefail
+set +x
+if [ -z "\\${'$'}${userEnv}" ] || [ -z "\\${'$'}${passEnv}" ]; then
+  echo "GitHub credentials unavailable; skipping release." >&2
+  exit 1
+fi
+CHECK_STATUS=\\$(curl -s -o /dev/null -w '%{http_code}' -u "\\${'$'}${userEnv}:\\${'$'}${passEnv}" -H "Accept: application/vnd.github+json" ${shellEscape(checkUrl)} || true)
+if [ "\\$CHECK_STATUS" = "200" ]; then
+  echo "GitHub release for ${tag} already exists; skipping."
+  exit 0
+fi
+curl -sSf -X POST -u "\\${'$'}${userEnv}:\\${'$'}${passEnv}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null
+echo "Published GitHub release ${tag} to ${repo}"
+"""
+    } else {
+        String tokenEnv = auth.tokenEnv ?: 'GITHUB_TOKEN'
+        script = """
+#!/bin/sh
+set -euo pipefail
+set +x
+if [ -z "\\${'$'}${tokenEnv}" ]; then
+  echo "GitHub token unavailable; skipping release." >&2
+  exit 1
+fi
+CHECK_STATUS=\\$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer \\${'$'}${tokenEnv}" -H "Accept: application/vnd.github+json" ${shellEscape(checkUrl)} || true)
+if [ "\\$CHECK_STATUS" = "200" ]; then
+  echo "GitHub release for ${tag} already exists; skipping."
+  exit 0
+fi
+curl -sSf -X POST -H "Authorization: Bearer \\${'$'}${tokenEnv}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null
+echo "Published GitHub release ${tag} to ${repo}"
+"""
+    }
+
+    sh script: script, label: 'Publish GitHub release'
+}
+
+private String determineGithubRepo(String configured) {
+    if (configured?.trim()) {
+        return configured.trim().replaceAll(/\\.git$/, '')
+    }
+    try {
+        String remote = sh(script: 'git remote get-url origin', returnStdout: true).trim()
+        String parsed = parseGithubRepoFromUrl(remote)
+        return parsed?.replaceAll(/\\.git$/, '')
+    } catch (Exception e) {
+        echo "Failed to determine GitHub repository: ${e.message}"
+        return ''
+    }
+}
+
+@NonCPS
+private String parseGithubRepoFromUrl(String url) {
+    if (!url) {
+        return ''
+    }
+    String cleaned = url.trim()
+    if (cleaned.endsWith('.git')) {
+        cleaned = cleaned.substring(0, cleaned.length() - 4)
+    }
+    if (cleaned.startsWith('git@')) {
+        int idx = cleaned.indexOf(':')
+        if (idx >= 0 && idx + 1 < cleaned.length()) {
+            return cleaned.substring(idx + 1)
+        }
+        return ''
+    }
+    try {
+        URI uri = new URI(cleaned)
+        String path = uri.getPath() ?: ''
+        path = path.replaceAll('^/', '')
+        return path
+    } catch (Exception ignored) {
+        // Fallback to simple stripping
+    }
+    int githubIdx = cleaned.indexOf('github.com/')
+    if (githubIdx >= 0) {
+        return cleaned.substring(githubIdx + 'github.com/'.length())
+    }
+    return cleaned
+}
+
+@NonCPS
+private String renderReleaseTemplate(String template, Map state, String tag) {
+    if (!template) {
+        return ''
+    }
+    Map<String, String> tokens = [
+        tag         : tag,
+        commit      : state.commit ?: '',
+        commit_short: state.commitShort ?: '',
+        branch      : state.branch ?: '',
+        image_tag   : state.imageTag ?: '',
+        build       : state.buildNumber ?: ''
+    ]
+    String result = template
+    tokens.each { k, v ->
+        result = result.replace("{{${k}}}", v ?: '')
+    }
+    return result
 }
