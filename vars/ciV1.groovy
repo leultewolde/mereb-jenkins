@@ -1861,41 +1861,43 @@ private void publishGithubReleaseInternal(Map githubCfg, Map state, Map auth, St
         String passEnv = auth.passwordEnv ?: 'GITHUB_PASSWORD'
         String userRef = '${' + userEnv + '}'
         String passRef = '${' + passEnv + '}'
-        script = """
-#!/bin/sh
-set -euo pipefail
-set +x
-if [ -z "${userRef}" ] || [ -z "${passRef}" ]; then
-  echo "GitHub credentials unavailable; skipping release." >&2
-  exit 1
-fi
-CHECK_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -u "${userRef}:${passRef}" -H "Accept: application/vnd.github+json" ${shellEscape(checkUrl)} || true)
-if [ "\$CHECK_STATUS" = "200" ]; then
-  echo "GitHub release for ${tag} already exists; skipping."
-  exit 0
-fi
-curl -sSf -X POST -u "${userRef}:${passRef}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null
-echo "Published GitHub release ${tag} to ${repo}"
-"""
+        List<String> lines = []
+        lines << '#!/bin/sh'
+        lines << 'set -euo pipefail'
+        lines << 'set +x'
+        lines << "if [ -z \"${userRef}\" ] || [ -z \"${passRef}\" ]; then"
+        lines << '  echo "GitHub credentials unavailable; skipping release." >&2'
+        lines << '  exit 1'
+        lines << 'fi'
+        lines << "auth=\"${userRef}:${passRef}\""
+        lines << "CHECK_STATUS=\$(curl -s -o /dev/null -w '%{http_code}' -u \"\${auth}\" -H \"Accept: application/vnd.github+json\" ${shellEscape(checkUrl)} || true)"
+        lines << 'if [ "$CHECK_STATUS" = "200" ]; then'
+        lines << '  echo "GitHub release for ${tag} already exists; skipping."'
+        lines << '  exit 0'
+        lines << 'fi'
+        lines << "curl -sSf -X POST -u \"\${auth}\" -H \"Accept: application/vnd.github+json\" -H \"Content-Type: application/json\" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null"
+        lines << 'echo "Published GitHub release ${tag} to ${repo}"'
+        script = lines.join('\n')
     } else {
         String tokenEnv = auth.tokenEnv ?: 'GITHUB_TOKEN'
         String tokenRef = '${' + tokenEnv + '}'
-        script = """
-#!/bin/sh
-set -euo pipefail
-set +x
-if [ -z "${tokenRef}" ]; then
-  echo "GitHub token unavailable; skipping release." >&2
-  exit 1
-fi
-CHECK_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${tokenRef}" -H "Accept: application/vnd.github+json" ${shellEscape(checkUrl)} || true)
-if [ "\$CHECK_STATUS" = "200" ]; then
-  echo "GitHub release for ${tag} already exists; skipping."
-  exit 0
-fi
-curl -sSf -X POST -H "Authorization: Bearer ${tokenRef}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null
-echo "Published GitHub release ${tag} to ${repo}"
-"""
+        List<String> lines = []
+        lines << '#!/bin/sh'
+        lines << 'set -euo pipefail'
+        lines << 'set +x'
+        lines << "if [ -z \"${tokenRef}\" ]; then"
+        lines << '  echo "GitHub token unavailable; skipping release." >&2'
+        lines << '  exit 1'
+        lines << 'fi'
+        lines << "auth_header=\"Authorization: Bearer ${tokenRef}\""
+        lines << "CHECK_STATUS=\$(curl -s -o /dev/null -w '%{http_code}' -H \"\${auth_header}\" -H \"Accept: application/vnd.github+json\" ${shellEscape(checkUrl)} || true)"
+        lines << 'if [ "$CHECK_STATUS" = "200" ]; then'
+        lines << '  echo "GitHub release for ${tag} already exists; skipping."'
+        lines << '  exit 0'
+        lines << 'fi'
+        lines << "curl -sSf -X POST -H \"\${auth_header}\" -H \"Accept: application/vnd.github+json\" -H \"Content-Type: application/json\" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null"
+        lines << 'echo "Published GitHub release ${tag} to ${repo}"'
+        script = lines.join('\n')
     }
 
     sh script: script, label: 'Publish GitHub release'
