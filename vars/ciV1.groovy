@@ -186,12 +186,29 @@ private void runBuildStages(List<Map> stages) {
     stages.each { Map stageCfg ->
         String name = stageCfg.name ?: 'Build'
         stage(name) {
-            if (stageCfg.verb) {
-                runVerb(stageCfg.verb as String)
-            } else if (stageCfg.sh) {
-                sh stageCfg.sh as String
+            List<String> envList = mapToEnvList(stageCfg.env instanceof Map ? stageCfg.env : [:])
+            List<Map> bindings = buildCredentialBindings([credentials: stageCfg.credentials])
+
+            Closure execute = {
+                if (stageCfg.verb) {
+                    runVerb(stageCfg.verb as String)
+                } else if (stageCfg.sh) {
+                    sh stageCfg.sh as String
+                } else {
+                    echo "Stage '${name}' has no action."
+                }
+            }
+
+            Closure wrapped = execute
+            if (envList && !envList.isEmpty()) {
+                wrapped = { withEnv(envList) { execute() } }
+            }
+            if (bindings && !bindings.isEmpty()) {
+                withCredentials(bindings) {
+                    wrapped.call()
+                }
             } else {
-                echo "Stage '${name}' has no action."
+                wrapped.call()
             }
         }
     }
@@ -811,9 +828,11 @@ private List<Map> computeBuildStages(String preset, Object buildCfgRaw) {
     if (buildCfg.stages instanceof List && buildCfg.stages) {
         return (buildCfg.stages as List).collect { Map stage ->
             [
-                name: stage.name?.toString() ?: 'Build',
-                verb: stage.verb?.toString(),
-                sh  : stage.sh?.toString()
+                name       : stage.name?.toString() ?: 'Build',
+                verb       : stage.verb?.toString(),
+                sh         : stage.sh?.toString(),
+                env        : toStringMap(stage.env),
+                credentials: normalizeCredentialList(stage.credentials)
             ]
         }
     }
@@ -827,9 +846,9 @@ private List<Map> computeBuildStages(String preset, Object buildCfgRaw) {
         case 'node':
         default:
             return [
-                [name: 'Install', verb: 'node.install'],
-                [name: 'Unit Tests', verb: 'node.test'],
-                [name: 'Build', verb: 'node.build']
+                [name: 'Install', verb: 'node.install', env: [:], credentials: []],
+                [name: 'Unit Tests', verb: 'node.test', env: [:], credentials: []],
+                [name: 'Build', verb: 'node.build', env: [:], credentials: []]
             ]
     }
 }
@@ -1141,6 +1160,49 @@ private List<Map> normalizeTerraformCredentials(Object raw) {
                     list << [
                         type: 'usernamePassword',
                         id  : id,
+                        usernameEnv: userEnv.toString(),
+                        passwordEnv: passEnv.toString()
+                    ]
+                }
+                break
+            default:
+                String envVar = entry.env ?: entry.variable ?: entry.var
+                if (envVar) {
+                    list << [type: 'string', id: id, env: envVar.toString()]
+                }
+                break
+        }
+    }
+    return list
+}
+
+@NonCPS
+private List<Map> normalizeCredentialList(Object raw) {
+    List<Map> list = []
+    if (!(raw instanceof List)) {
+        return list
+    }
+    (raw as List).each { item ->
+        Map entry = item instanceof Map ? item : [:]
+        String id = entry.id?.toString()
+        if (!id) {
+            return
+        }
+        String type = (entry.type ?: 'string').toString()
+        switch (type) {
+            case 'file':
+                String envVar = entry.env ?: entry.variable ?: entry.var
+                if (envVar) {
+                    list << [type: 'file', id: id, env: envVar.toString()]
+                }
+                break
+            case 'usernamePassword':
+                String userEnv = entry.usernameEnv ?: entry.userEnv ?: entry.usernameVariable
+                String passEnv = entry.passwordEnv ?: entry.passEnv ?: entry.passwordVariable
+                if (userEnv && passEnv) {
+                    list << [
+                        type       : 'usernamePassword',
+                        id         : id,
                         usernameEnv: userEnv.toString(),
                         passwordEnv: passEnv.toString()
                     ]
