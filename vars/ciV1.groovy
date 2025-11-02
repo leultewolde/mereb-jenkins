@@ -1642,7 +1642,8 @@ private void withReleaseCredentials(Map autoTag, Closure body) {
             String tokenUser = cred.tokenUser ?: 'x-access-token'
             withCredentials([string(credentialsId: cred.id, variable: tokenEnv)]) {
                 if (hasRemote && originalUrl) {
-                    String updated = injectCredentialsIntoUrl(originalUrl, tokenUser, env[tokenEnv] ?: '')
+                    String tokenVal = resolveEnvVar(tokenEnv)
+                    String updated = injectCredentialsIntoUrl(originalUrl, tokenUser, tokenVal ?: '')
                     sh "git remote set-url ${shellEscape(remote)} ${shellEscape(updated)}"
                 }
                 try {
@@ -1657,7 +1658,9 @@ private void withReleaseCredentials(Map autoTag, Closure body) {
             String passEnv = cred.passwordEnv ?: 'GIT_PASSWORD'
             withCredentials([usernamePassword(credentialsId: cred.id, usernameVariable: userEnv, passwordVariable: passEnv)]) {
                 if (hasRemote && originalUrl) {
-                    String updated = injectCredentialsIntoUrl(originalUrl, env[userEnv] ?: '', env[passEnv] ?: '')
+                    String userVal = resolveEnvVar(userEnv) ?: ''
+                    String passVal = resolveEnvVar(passEnv) ?: ''
+                    String updated = injectCredentialsIntoUrl(originalUrl, userVal, passVal)
                     sh "git remote set-url ${shellEscape(remote)} ${shellEscape(updated)}"
                 }
                 try {
