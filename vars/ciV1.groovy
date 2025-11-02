@@ -773,22 +773,41 @@ private void deployEnvironments(Map cfg, Map state) {
                 setCombined['image.tag'] = state.imageTag
             }
 
-            helmDeploy(
-                release    : envCfg.release,
-                namespace  : envCfg.namespace,
-                chart      : envCfg.chart,
-                repo       : envCfg.repo,
-                version    : envCfg.chartVersion,
-                valuesFiles: valuesFiles,
-                set        : setCombined,
-                setString  : envCfg.setString,
-                setFile    : envCfg.setFile,
-                kubeContext: envCfg.kubeContext,
-                kubeconfig : envCfg.kubeconfig,
-                wait       : envCfg.wait,
-                atomic     : envCfg.atomic,
-                timeout    : envCfg.timeout
-            )
+            Map helmArgs = [
+                release     : envCfg.release,
+                namespace   : envCfg.namespace,
+                chart       : envCfg.chart,
+                repo        : envCfg.repo,
+                version     : envCfg.chartVersion,
+                valuesFiles : valuesFiles,
+                set         : setCombined,
+                setString   : envCfg.setString,
+                setFile     : envCfg.setFile,
+                kubeContext : envCfg.kubeContext,
+                kubeconfig  : envCfg.kubeconfig,
+                wait        : envCfg.wait,
+                atomic      : envCfg.atomic,
+                timeout     : envCfg.timeout,
+                repoUsername: envCfg.repoUsername,
+                repoPassword: envCfg.repoPassword
+            ]
+
+            Map repoCreds = envCfg.repoCredentials instanceof Map ? envCfg.repoCredentials : [:]
+            String repoCredId = (repoCreds.id ?: '').toString().trim()
+            if (repoCredId) {
+                String userEnvVar = (repoCreds.usernameEnv ?: 'HELM_REPO_USERNAME').toString()
+                String passEnvVar = (repoCreds.passwordEnv ?: 'HELM_REPO_PASSWORD').toString()
+                withCredentials([
+                    usernamePassword(credentialsId: repoCredId, usernameVariable: userEnvVar, passwordVariable: passEnvVar)
+                ]) {
+                    Map argsWithCreds = helmArgs.clone() as Map
+                    argsWithCreds.repoUsername = env[userEnvVar]
+                    argsWithCreds.repoPassword = env[passEnvVar]
+                    helmDeploy(argsWithCreds)
+                }
+            } else {
+                helmDeploy(helmArgs)
+            }
         }
 
         Map smoke = envCfg.smoke ?: [:]
@@ -1453,6 +1472,22 @@ private Map normalizeEnvironment(String name, Map envCfg, Map appCfg) {
     String release = (envCfg.release ?: appCfg.release ?: appCfg.name ?: name).toString()
     String chart = (envCfg.chart ?: appCfg.chart ?: 'infra/charts/app-chart').toString()
 
+    Map repoCredsRaw = envCfg.repoCredentials instanceof Map ? envCfg.repoCredentials : [:]
+    String repoCredentialId = (
+        envCfg.repoCredentialId ? envCfg.repoCredentialId :
+        envCfg.repoCredential ? envCfg.repoCredential :
+        repoCredsRaw.id
+    )?.toString()
+
+    Map repoCredentials = [:]
+    if (repoCredentialId) {
+        repoCredentials = [
+            id         : repoCredentialId,
+            usernameEnv: (envCfg.repoUsernameEnv ?: repoCredsRaw.usernameEnv ?: 'HELM_REPO_USERNAME').toString(),
+            passwordEnv: (envCfg.repoPasswordEnv ?: repoCredsRaw.passwordEnv ?: 'HELM_REPO_PASSWORD').toString()
+        ]
+    }
+
     return [
         name        : name,
         displayName : display,
@@ -1471,6 +1506,9 @@ private Map normalizeEnvironment(String name, Map envCfg, Map appCfg) {
         approval    : approval,
         kubeContext : envCfg.context ?: envCfg.kubeContext,
         kubeconfig  : envCfg.kubeconfig,
+        repoUsername: envCfg.repoUsername ?: appCfg.repoUsername,
+        repoPassword: envCfg.repoPassword ?: appCfg.repoPassword,
+        repoCredentials: repoCredentials,
         wait        : envCfg.wait == null ? true : envCfg.wait as Boolean,
         atomic      : envCfg.atomic == null ? true : envCfg.atomic as Boolean,
         timeout     : (envCfg.timeout ?: appCfg.timeout ?: '10m').toString()

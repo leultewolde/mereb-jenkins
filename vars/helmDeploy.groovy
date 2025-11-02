@@ -11,6 +11,8 @@ def call(Map args = [:]) {
     String version = args.version ? args.version.toString() : null
     String kubeContext = args.kubeContext ? args.kubeContext.toString() : null
     String kubeconfig = args.kubeconfig ? args.kubeconfig.toString() : null
+    String repoUsername = args.repoUsername ? args.repoUsername.toString() : null
+    String repoPassword = args.repoPassword ? args.repoPassword.toString() : null
     List valuesFiles = args.valuesFiles instanceof List ? args.valuesFiles : (args.valuesFiles ? [args.valuesFiles] : [])
     Map setMap = args.set instanceof Map ? args.set : [:]
     Map setStringMap = args.setString instanceof Map ? args.setString : [:]
@@ -33,6 +35,13 @@ def call(Map args = [:]) {
     }
     if (version) {
         cmd << "--version ${q(version)}"
+    }
+    if (repoUsername) {
+        cmd << "--username ${q(repoUsername)}"
+    }
+    if (repoPassword) {
+        cmd << "--password ${q(repoPassword)}"
+        cmd << "--pass-credentials"
     }
     if (kubeContext) {
         cmd << "--kube-context ${q(kubeContext)}"
