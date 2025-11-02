@@ -1024,21 +1024,21 @@ private Map normalizeReleaseAutoTag(Object raw) {
 }
 
 private Map normalizeReleaseGithub(Object raw, Map autoTag) {
-    Map data = raw instanceof Map ? new LinkedHashMap(raw) : [:]
+    Map data = raw instanceof Map ? raw : [:]
     if (data.isEmpty()) {
         return [enabled: false]
     }
     boolean enabled = data.containsKey('enabled') ? data.enabled as Boolean : true
     if (!data.containsKey('credentialId') && !(data.credential instanceof Map) && autoTag?.credential?.id) {
-        data = new LinkedHashMap(data)
-        data.credential = [
+        data = new HashMap(data)
+        data.put('credential', [
             id         : autoTag.credential.id,
             type       : autoTag.credential.type,
             usernameEnv: autoTag.credential.usernameEnv,
             passwordEnv: autoTag.credential.passwordEnv,
             tokenEnv   : autoTag.credential.tokenEnv,
             tokenUser  : autoTag.credential.tokenUser
-        ]
+        ])
     }
     Map credential = normalizeReleaseCredential(data)
 
