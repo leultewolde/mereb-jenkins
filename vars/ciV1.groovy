@@ -430,9 +430,13 @@ private void handleRelease(Map releaseCfg, Map state) {
             return
         }
 
+        cleanWorkspaceForTag(autoTag)
+
         String treeStatus = sh(script: 'git status --porcelain', returnStdout: true).trim()
-        if (treeStatus) {
+        if (treeStatus && !(autoTag.allowDirty as Boolean)) {
             error "Working tree contains uncommitted changes; refusing to create a release tag."
+        } else if (treeStatus) {
+            echo "Working tree has uncommitted changes but continuing because 'allowDirty' is enabled."
         }
 
         if (autoTag.skipIfTagged as Boolean) {
@@ -453,6 +457,14 @@ private void handleRelease(Map releaseCfg, Map state) {
             action()
         }
     }
+}
+
+private void cleanWorkspaceForTag(Map autoTag) {
+    if (!(autoTag.clean as Boolean)) {
+        return
+    }
+    sh 'git reset --hard HEAD'
+    sh 'git clean -fd'
 }
 
 private void createAndPushTag(Map autoTag, Map state) {
@@ -954,6 +966,8 @@ private Map normalizeReleaseAutoTag(Object raw) {
         annotated    : data.containsKey('annotated') ? data.annotated as Boolean : (data.containsKey('annotate') ? data.annotate as Boolean : false),
         push         : data.containsKey('push') ? data.push as Boolean : true,
         skipIfTagged : data.containsKey('skipIfTagged') ? data.skipIfTagged as Boolean : true,
+        clean        : data.containsKey('clean') ? data.clean as Boolean : true,
+        allowDirty   : data.containsKey('allowDirty') ? data.allowDirty as Boolean : false,
         env          : toStringMap(data.env)
     ]
 }
