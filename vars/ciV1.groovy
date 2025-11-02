@@ -1595,28 +1595,47 @@ private String resolveCommitSha() {
 
 private String resolveImageTag(Map imageCfg, Map state) {
     Map ctx = templateContext(state)
+    String candidate = null
+
     if (imageCfg.tagTemplate) {
-        return renderTemplate(imageCfg.tagTemplate.toString(), ctx)
+        candidate = renderTemplate(imageCfg.tagTemplate.toString(), ctx)
+    } else if (state.tagName?.trim()) {
+        candidate = state.tagName.trim()
+    } else {
+        switch (imageCfg.tagStrategy) {
+            case 'commit':
+                candidate = state.commitShort ?: state.commit
+                break
+            case 'build':
+                if (ctx.branchSlug && ctx.buildNumber) {
+                    candidate = "${ctx.branchSlug}-${ctx.buildNumber}"
+                } else {
+                    candidate = state.commitShort ?: state.commit
+                }
+                break
+            case 'branch':
+                candidate = ctx.branchSlug ?: 'latest'
+                break
+            case 'branch-sha':
+            default:
+                String branch = ctx.branchSlug ?: 'build'
+                String sha = state.commitShort ?: state.commit
+                candidate = "${branch}-${sha}"
+                break
+        }
     }
-    if (state.tagName?.trim()) {
-        return state.tagName.trim()
+
+    candidate = (candidate ?: '').trim()
+    if (!candidate) {
+        String fallbackBranch = ctx.branchSlug ?: 'build'
+        String fallbackSha = state.commitShort ?: state.commit
+        if (!fallbackSha?.trim()) {
+            fallbackSha = System.currentTimeMillis().toString()
+        }
+        candidate = "${fallbackBranch}-${fallbackSha}"
     }
-    switch (imageCfg.tagStrategy) {
-        case 'commit':
-            return state.commitShort ?: state.commit
-        case 'build':
-            if (ctx.branchSlug && ctx.buildNumber) {
-                return "${ctx.branchSlug}-${ctx.buildNumber}"
-            }
-            return state.commitShort ?: state.commit
-        case 'branch':
-            return ctx.branchSlug ?: 'latest'
-        case 'branch-sha':
-        default:
-            String branch = ctx.branchSlug ?: 'build'
-            String sha = state.commitShort ?: state.commit
-            return "${branch}-${sha}"
-    }
+
+    return candidate
 }
 
 @NonCPS
