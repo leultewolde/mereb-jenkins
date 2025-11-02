@@ -1680,26 +1680,22 @@ private String injectCredentialsIntoUrl(String remoteUrl, String username, Strin
     if (!(remoteUrl.startsWith('http://') || remoteUrl.startsWith('https://'))) {
         return remoteUrl
     }
+    String scheme = remoteUrl.startsWith('https://') ? 'https://' : 'http://'
+    String remainder = remoteUrl.substring(scheme.length())
+    String safeUser = urlEncode(username ?: '')
+    String safePass = password ? urlEncode(password) : ''
+    String userInfo = safePass ? "${safeUser}:${safePass}@" : "${safeUser}@"
+    if (remainder.startsWith(userInfo)) {
+        return scheme + remainder
+    }
+    return scheme + userInfo + remainder
+}
+
+@NonCPS
+private String urlEncode(String value) {
     try {
-        URI uri = new URI(remoteUrl)
-        String userInfo
-        if (password == null || password.isEmpty()) {
-            userInfo = URLEncoder.encode(username ?: '', 'UTF-8')
-        } else {
-            userInfo = "${URLEncoder.encode(username ?: '', 'UTF-8')}:${URLEncoder.encode(password, 'UTF-8')}"
-        }
-        URI updated = new URI(
-            uri.getScheme(),
-            userInfo,
-            uri.getHost(),
-            uri.getPort(),
-            uri.getPath(),
-            uri.getQuery(),
-            uri.getFragment()
-        )
-        return updated.toString()
-    } catch (Exception e) {
-        echo "Failed to inject credentials into remote URL: ${e.message}"
-        return remoteUrl
+        return URLEncoder.encode(value ?: '', 'UTF-8').replace('+', '%20')
+    } catch (Exception ignored) {
+        return value ?: ''
     }
 }
