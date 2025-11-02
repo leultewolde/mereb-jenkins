@@ -1865,6 +1865,8 @@ private void publishGithubReleaseInternal(Map githubCfg, Map state, Map auth, St
         lines << '#!/usr/bin/env bash'
         lines << 'set -euo pipefail'
         lines << 'set +x'
+        lines << "TAG=${shellEscape(tag)}"
+        lines << "REPO=${shellEscape(repo)}"
         lines << "if [ -z \"${userRef}\" ] || [ -z \"${passRef}\" ]; then"
         lines << '  echo "GitHub credentials unavailable; skipping release." >&2'
         lines << '  exit 1'
@@ -1872,11 +1874,11 @@ private void publishGithubReleaseInternal(Map githubCfg, Map state, Map auth, St
         lines << "auth=\"${userRef}:${passRef}\""
         lines << "CHECK_STATUS=\$(curl -s -o /dev/null -w '%{http_code}' -u \"\${auth}\" -H \"Accept: application/vnd.github+json\" ${shellEscape(checkUrl)} || true)"
         lines << 'if [ "$CHECK_STATUS" = "200" ]; then'
-        lines << '  echo "GitHub release for ${tag} already exists; skipping."'
+        lines << '  echo "GitHub release for ${TAG} already exists; skipping."'
         lines << '  exit 0'
         lines << 'fi'
         lines << "curl -sSf -X POST -u \"\${auth}\" -H \"Accept: application/vnd.github+json\" -H \"Content-Type: application/json\" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null"
-        lines << 'echo "Published GitHub release ${tag} to ${repo}"'
+        lines << 'echo "Published GitHub release ${TAG} to ${REPO}"'
         script = lines.join('\n')
     } else {
         String tokenEnv = auth.tokenEnv ?: 'GITHUB_TOKEN'
@@ -1885,6 +1887,8 @@ private void publishGithubReleaseInternal(Map githubCfg, Map state, Map auth, St
         lines << '#!/usr/bin/env bash'
         lines << 'set -euo pipefail'
         lines << 'set +x'
+        lines << "TAG=${shellEscape(tag)}"
+        lines << "REPO=${shellEscape(repo)}"
         lines << "if [ -z \"${tokenRef}\" ]; then"
         lines << '  echo "GitHub token unavailable; skipping release." >&2'
         lines << '  exit 1'
@@ -1892,11 +1896,11 @@ private void publishGithubReleaseInternal(Map githubCfg, Map state, Map auth, St
         lines << "auth_header=\"Authorization: Bearer ${tokenRef}\""
         lines << "CHECK_STATUS=\$(curl -s -o /dev/null -w '%{http_code}' -H \"\${auth_header}\" -H \"Accept: application/vnd.github+json\" ${shellEscape(checkUrl)} || true)"
         lines << 'if [ "$CHECK_STATUS" = "200" ]; then'
-        lines << '  echo "GitHub release for ${tag} already exists; skipping."'
+        lines << '  echo "GitHub release for ${TAG} already exists; skipping."'
         lines << '  exit 0'
         lines << 'fi'
         lines << "curl -sSf -X POST -H \"\${auth_header}\" -H \"Accept: application/vnd.github+json\" -H \"Content-Type: application/json\" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null"
-        lines << 'echo "Published GitHub release ${tag} to ${repo}"'
+        lines << 'echo "Published GitHub release ${TAG} to ${REPO}"'
         script = lines.join('\n')
     }
 
