@@ -260,8 +260,10 @@ private void dockerBuild(Map imageCfg, Map state) {
 }
 
 private void dockerPush(Map cfg, Map state) {
+    Map pushCfg = cfg.image.push
+    dockerLoginIfNeeded(cfg.image, pushCfg)
     sh "docker push ${shellEscape(state.imageRef)}"
-    (cfg.image.push.extraTags ?: []).each { rawTag ->
+    (pushCfg.extraTags ?: []).each { rawTag ->
         String rendered = renderTemplate(rawTag.toString(), templateContext(state))
         if (!rendered?.trim()) {
             return
@@ -341,6 +343,28 @@ private boolean shouldPush(Map cfg) {
         return false
     }
     return Helpers.matchCondition(pushCfg.when as String, env)
+}
+
+private void dockerLoginIfNeeded(Map imageCfg, Map pushCfg) {
+    Map credentials = pushCfg.credentials instanceof Map ? pushCfg.credentials : [:]
+    String credentialId = (credentials.id ?: '').toString().trim()
+    if (!credentialId) {
+        return
+    }
+
+    String usernameEnv = (credentials.usernameEnv ?: 'DOCKER_USERNAME').toString()
+    String passwordEnv = (credentials.passwordEnv ?: 'DOCKER_PASSWORD').toString()
+    String registry = (pushCfg.registry ?: imageCfg.registryHost ?: '').toString().trim()
+    registry = registry.replaceFirst('^https?://', '')
+    if (!registry) {
+        registry = 'docker.io'
+    }
+
+    String hostSegment = registry ? " ${shellEscape(registry)}" : ''
+    echo "Logging in to Docker registry '${registry}' using credential '${credentialId}'."
+    withCredentials([usernamePassword(credentialsId: credentialId, usernameVariable: usernameEnv, passwordVariable: passwordEnv)]) {
+        sh "echo \"\$${passwordEnv}\" | docker login${hostSegment} -u \"\$${usernameEnv}\" --password-stdin"
+    }
 }
 
 private boolean shouldSign(Map cfg) {
@@ -915,25 +939,59 @@ private Map normalizeImage(Map raw) {
         }
     }
 
+    String registryOverride = (imageRaw.registry ?: '').toString().trim()
+    String derivedRegistryHost = deriveRegistryHost(repository)
+    if (registryOverride) {
+        derivedRegistryHost = registryOverride
+    }
+
     Map imageCfg = [
-        enabled    : true,
-        repository : repository,
-        context    : (imageRaw.context ?: '.').toString(),
-        dockerfile : (imageRaw.dockerfile ?: 'Dockerfile').toString(),
-        buildArgs  : toStringMap(imageRaw.buildArgs),
-        buildFlags : toStringList(imageRaw.buildFlags),
-        platforms  : toStringList(imageRaw.platforms),
-        tagStrategy: (imageRaw.tagStrategy ?: 'branch-sha').toString(),
-        tagTemplate: imageRaw.tagTemplate ?: imageRaw.tag
+        enabled      : true,
+        repository   : repository,
+        registryHost : derivedRegistryHost,
+        context      : (imageRaw.context ?: '.').toString(),
+        dockerfile   : (imageRaw.dockerfile ?: 'Dockerfile').toString(),
+        buildArgs    : toStringMap(imageRaw.buildArgs),
+        buildFlags   : toStringList(imageRaw.buildFlags),
+        platforms    : toStringList(imageRaw.platforms),
+        tagStrategy  : (imageRaw.tagStrategy ?: 'branch-sha').toString(),
+        tagTemplate  : imageRaw.tagTemplate ?: imageRaw.tag
     ]
 
     imageCfg.push = [
         enabled  : pushRaw.enabled == null ? true : pushRaw.enabled as Boolean,
         when     : (pushRaw.when ?: imageRaw.pushWhen ?: '!pr').toString(),
-        extraTags: toStringList(pushRaw.extraTags ?: imageRaw.extraTags)
+        extraTags: toStringList(pushRaw.extraTags ?: imageRaw.extraTags),
+        registry : (pushRaw.registry ?: '').toString().trim()
     ]
 
+    String pushCredentialId = (pushRaw.credentialsId ?: pushRaw.credentialId ?: pushRaw.credential ?: pushRaw.id ?: '').toString().trim()
+    if (pushCredentialId) {
+        imageCfg.push.credentials = [
+            id         : pushCredentialId,
+            usernameEnv: (pushRaw.usernameEnv ?: pushRaw.usernameVariable ?: 'DOCKER_USERNAME').toString(),
+            passwordEnv: (pushRaw.passwordEnv ?: pushRaw.passwordVariable ?: 'DOCKER_PASSWORD').toString()
+        ]
+    }
+
     return imageCfg
+}
+
+@NonCPS
+private String deriveRegistryHost(String repository) {
+    if (!repository?.trim()) {
+        return ''
+    }
+    String repo = repository.trim()
+    int slash = repo.indexOf('/')
+    if (slash <= 0) {
+        return 'docker.io'
+    }
+    String candidate = repo.substring(0, slash)
+    if (candidate.contains('.') || candidate.contains(':')) {
+        return candidate
+    }
+    return 'docker.io'
 }
 
 private Map normalizeSbom(Object raw) {
