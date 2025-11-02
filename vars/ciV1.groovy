@@ -1859,38 +1859,41 @@ private void publishGithubReleaseInternal(Map githubCfg, Map state, Map auth, St
     if ('basic'.equalsIgnoreCase(auth.mode as String)) {
         String userEnv = auth.usernameEnv ?: 'GITHUB_USERNAME'
         String passEnv = auth.passwordEnv ?: 'GITHUB_PASSWORD'
+        String userRef = '${' + userEnv + '}'
+        String passRef = '${' + passEnv + '}'
         script = """
 #!/bin/sh
 set -euo pipefail
 set +x
-if [ -z "\\${'$'}${userEnv}" ] || [ -z "\\${'$'}${passEnv}" ]; then
+if [ -z "${userRef}" ] || [ -z "${passRef}" ]; then
   echo "GitHub credentials unavailable; skipping release." >&2
   exit 1
 fi
-CHECK_STATUS=\\$(curl -s -o /dev/null -w '%{http_code}' -u "\\${'$'}${userEnv}:\\${'$'}${passEnv}" -H "Accept: application/vnd.github+json" ${shellEscape(checkUrl)} || true)
-if [ "\\$CHECK_STATUS" = "200" ]; then
+CHECK_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -u "${userRef}:${passRef}" -H "Accept: application/vnd.github+json" ${shellEscape(checkUrl)} || true)
+if [ "\$CHECK_STATUS" = "200" ]; then
   echo "GitHub release for ${tag} already exists; skipping."
   exit 0
 fi
-curl -sSf -X POST -u "\\${'$'}${userEnv}:\\${'$'}${passEnv}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null
+curl -sSf -X POST -u "${userRef}:${passRef}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null
 echo "Published GitHub release ${tag} to ${repo}"
 """
     } else {
         String tokenEnv = auth.tokenEnv ?: 'GITHUB_TOKEN'
+        String tokenRef = '${' + tokenEnv + '}'
         script = """
 #!/bin/sh
 set -euo pipefail
 set +x
-if [ -z "\\${'$'}${tokenEnv}" ]; then
+if [ -z "${tokenRef}" ]; then
   echo "GitHub token unavailable; skipping release." >&2
   exit 1
 fi
-CHECK_STATUS=\\$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer \\${'$'}${tokenEnv}" -H "Accept: application/vnd.github+json" ${shellEscape(checkUrl)} || true)
-if [ "\\$CHECK_STATUS" = "200" ]; then
+CHECK_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${tokenRef}" -H "Accept: application/vnd.github+json" ${shellEscape(checkUrl)} || true)
+if [ "\$CHECK_STATUS" = "200" ]; then
   echo "GitHub release for ${tag} already exists; skipping."
   exit 0
 fi
-curl -sSf -X POST -H "Authorization: Bearer \\${'$'}${tokenEnv}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null
+curl -sSf -X POST -H "Authorization: Bearer ${tokenRef}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data ${shellEscape(payloadJson)} ${shellEscape(apiUrl)} > /dev/null
 echo "Published GitHub release ${tag} to ${repo}"
 """
     }
