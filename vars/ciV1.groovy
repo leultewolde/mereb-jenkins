@@ -795,16 +795,14 @@ private void deployEnvironments(Map cfg, Map state) {
             Map repoCreds = envCfg.repoCredentials instanceof Map ? envCfg.repoCredentials : [:]
             String repoCredId = (repoCreds.id ?: '').toString().trim()
             if (repoCredId) {
-                String userEnvVar = (repoCreds.usernameEnv ?: 'HELM_REPO_USERNAME').toString()
-                String passEnvVar = (repoCreds.passwordEnv ?: 'HELM_REPO_PASSWORD').toString()
-                Map argsWithCreds = helmArgs.clone() as Map
                 withCredentials([
-                    usernamePassword(credentialsId: repoCredId, usernameVariable: userEnvVar, passwordVariable: passEnvVar)
+                    usernamePassword(credentialsId: repoCredId, usernameVariable: 'HELM_REPO_USERNAME', passwordVariable: 'HELM_REPO_PASSWORD')
                 ]) {
-                    argsWithCreds.repoUsername = env[userEnvVar]
-                    argsWithCreds.repoPassword = env[passEnvVar]
+                    Map argsWithCreds = helmArgs.clone() as Map
+                    argsWithCreds.repoUsername = env.HELM_REPO_USERNAME
+                    argsWithCreds.repoPassword = env.HELM_REPO_PASSWORD
+                    helmDeploy(argsWithCreds)
                 }
-                helmDeploy(argsWithCreds)
             } else {
                 helmDeploy(helmArgs)
             }
@@ -1481,11 +1479,7 @@ private Map normalizeEnvironment(String name, Map envCfg, Map appCfg) {
 
     Map repoCredentials = [:]
     if (repoCredentialId) {
-        repoCredentials = [
-            id         : repoCredentialId,
-            usernameEnv: (envCfg.repoUsernameEnv ?: repoCredsRaw.usernameEnv ?: 'HELM_REPO_USERNAME').toString(),
-            passwordEnv: (envCfg.repoPasswordEnv ?: repoCredsRaw.passwordEnv ?: 'HELM_REPO_PASSWORD').toString()
-        ]
+        repoCredentials = [id: repoCredentialId]
     }
 
     return [
