@@ -57,6 +57,10 @@ def call(Map args = [:]) {
         state.imageTag = ''
         state.imageRef = ''
 
+        if ((env.TAG_NAME ?: '').trim()) {
+            env.RELEASE_TAG = env.TAG_NAME
+        }
+
         if (cfg.image.enabled) {
             state.repository = cfg.image.repository
             state.imageTag = resolveImageTag(cfg.image, state)
@@ -119,6 +123,7 @@ def call(Map args = [:]) {
 
                 List<String> deferredTerraform = runTerraform(cfg.terraform, null, true)
                 handleRelease(cfg.release, state)
+                runReleaseStages(cfg.releaseStages)
                 if (env.RELEASE_TAG?.trim() && deferredTerraform && !deferredTerraform.isEmpty()) {
                     env.TAG_NAME = env.RELEASE_TAG
                     echo "Running deferred Terraform environments after creating tag ${env.RELEASE_TAG}"
@@ -209,6 +214,46 @@ private void runBuildStages(List<Map> stages) {
                 }
             } else {
                 wrapped.call()
+            }
+        }
+    }
+}
+
+private void runReleaseStages(List<Map> stages) {
+    if (!stages || stages.isEmpty()) {
+        return
+    }
+    String effectiveTag = (env.RELEASE_TAG ?: env.TAG_NAME ?: '').trim()
+    if (!effectiveTag) {
+        echo "Release stages skipped; release tag not available."
+        return
+    }
+    stages.each { Map stageCfg ->
+        String name = stageCfg.name ?: 'Release Task'
+        String whenCond = stageCfg.when ?: ''
+        if (whenCond && !Helpers.matchCondition(whenCond, env)) {
+            echo "Release stage '${name}' skipped by condition '${whenCond}'"
+        } else {
+            stage(name) {
+                List<String> envList = mapToEnvList(stageCfg.env instanceof Map ? stageCfg.env : [:])
+                envList << "RELEASE_TAG=${effectiveTag}"
+                List<Map> bindings = buildCredentialBindings([credentials: stageCfg.credentials])
+
+                Closure execute = {
+                    if (stageCfg.verb) {
+                        runVerb(stageCfg.verb as String)
+                    } else if (stageCfg.sh) {
+                        sh stageCfg.sh as String
+                    } else {
+                        echo "Stage '${name}' has no action."
+                    }
+                }
+
+                Closure wrapped = execute
+                if (envList && !envList.isEmpty()) {
+                    wrapped = { withEnv(envList) { execute() } }
+                }
+                withOptionalCredentials(bindings, wrapped)
             }
         }
     }
@@ -847,6 +892,7 @@ private Map normalizeConfig(Map raw) {
     cfg.preset = (raw.preset ?: raw.build?.preset ?: 'node').toString()
     cfg.matrix = normalizeMatrix(raw.matrix)
     cfg.buildStages = computeBuildStages(cfg.preset, raw.build)
+    cfg.releaseStages = normalizeUserStages(raw.releaseStages)
 
     cfg.image = normalizeImage(raw)
     cfg.sbom = normalizeSbom(raw.sbom)
@@ -906,6 +952,29 @@ private List<Map> computeBuildStages(String preset, Object buildCfgRaw) {
                 [name: 'Build', verb: 'node.build', env: [:], credentials: []]
             ]
     }
+}
+
+@NonCPS
+private List<Map> normalizeUserStages(Object raw) {
+    if (!(raw instanceof List)) {
+        return []
+    }
+    List<Map> stages = []
+    (raw as List).each { Object entry ->
+        Map stage = entry instanceof Map ? entry : [:]
+        if (stage.isEmpty()) {
+            return
+        }
+        stages << [
+            name       : stage.name?.toString() ?: 'Release Task',
+            verb       : stage.verb?.toString(),
+            sh         : stage.sh?.toString(),
+            when       : stage.when?.toString(),
+            env        : toStringMap(stage.env),
+            credentials: normalizeCredentialList(stage.credentials)
+        ]
+    }
+    return stages
 }
 
 private Map normalizeImage(Map raw) {
