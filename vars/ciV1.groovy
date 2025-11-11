@@ -530,6 +530,20 @@ private List<String> runTerraform(Map tfCfg, List<String> overrideOrder = null, 
 
             withOptionalCredentials(bindings, execute)
         }
+
+        Map smoke = envCfg.smoke ?: [:]
+        if (smoke.url || smoke.script || smoke.command) {
+            stage("Smoke ${envCfg.displayName}") {
+                Map payload = [:]
+                payload.putAll(smoke)
+                payload.environment = envCfg.displayName
+                List<Map> smokeBindings = buildCredentialBindings(envCfg)
+                Closure smokeRun = {
+                    runSmoke(payload)
+                }
+                withOptionalCredentials(smokeBindings, smokeRun)
+            }
+        }
     }
 
     return deferred
@@ -1266,6 +1280,7 @@ private Map normalizeTerraformEnvironment(String name, Object raw) {
     Map backendMap = toStringMap(data.backendConfig)
     List<Map> credentials = normalizeTerraformCredentials(data.credentials)
     Map approval = normalizeApproval(data.approve ?: data.approval)
+    Map smoke = normalizeSmoke(data.smoke)
 
     return [
         name                : name,
@@ -1287,7 +1302,8 @@ private Map normalizeTerraformEnvironment(String name, Object raw) {
         apply               : data.containsKey('apply') ? data.apply as Boolean : true,
         autoApply           : data.containsKey('autoApply') ? data.autoApply as Boolean : true,
         workspace           : data.workspace?.toString(),
-        approval            : approval
+        approval            : approval,
+        smoke               : smoke
     ]
 }
 
