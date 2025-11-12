@@ -92,7 +92,9 @@ def call(Map args = [:]) {
 
             withEnv(exportedEnv) {
                 checkout scm
-                sh 'chmod +x ./gradlew || true'
+                if (fileExists('gradlew')) {
+                    sh 'chmod +x ./gradlew'
+                }
 
                 buildStages.runBuildStages(cfg.buildStages)
                 buildStages.runMatrix(cfg.matrix)

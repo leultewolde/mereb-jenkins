@@ -268,10 +268,17 @@ PNPM_VERSION="${PNPM_VERSION:-9.0.0}"
 
 if command -v corepack >/dev/null 2>&1; then
   corepack prepare pnpm@${PNPM_VERSION} --activate
+  # Ensure shims are actually written into the PATH we set in bootstrap.
+  corepack enable pnpm >/dev/null 2>&1 || corepack enable >/dev/null 2>&1 || true
 elif command -v npm >/dev/null 2>&1; then
   npm install -g pnpm@${PNPM_VERSION}
 else
   echo "Neither pnpm, corepack, nor npm are available on this agent." >&2
+  exit 1
+fi
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "pnpm was not installed even after running the prepare step." >&2
   exit 1
 fi
 
