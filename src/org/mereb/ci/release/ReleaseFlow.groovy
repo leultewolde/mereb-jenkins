@@ -69,14 +69,12 @@ class ReleaseFlow implements Serializable {
 
     void handleRelease(Map releaseCfg, Map state) {
         Map autoTag = releaseCfg?.autoTag instanceof Map ? (releaseCfg.autoTag as Map) : [:]
-        String configuredId = ''
-        if (autoTag.get('credential') instanceof Map) {
-            Object idVal = (autoTag.get('credential') as Map).get('id')
-            configuredId = idVal?.toString()
-        }
+        Map cred = autoTag.get('credential') instanceof Map ? (autoTag.get('credential') as Map) : [:]
+        String configuredId = cred?.get('id')?.toString()
         if (!configuredId) {
             configuredId = autoTag.get('credentialId')?.toString()
         }
+        autoTag.credentialId = configuredId
         if (!(autoTag.enabled as Boolean)) {
             return
         }
