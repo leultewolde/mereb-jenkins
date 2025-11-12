@@ -84,7 +84,7 @@ class CredentialHelper implements Serializable {
         if (!safeName) {
             return ''
         }
-        String script = """printf '%s' "\$${safeName}""" 
+        String script = "printenv ${safeName} || true"
         return steps.sh(script: script, returnStdout: true).trim()
     }
 }
