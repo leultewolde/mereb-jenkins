@@ -13,6 +13,7 @@ import org.mereb.ci.util.PipelineHelper
 import org.mereb.ci.verbs.VerbRunner
 
 import static org.mereb.ci.util.PipelineUtils.*
+import java.util.UUID
 
 @Field final String PRIMARY_CONFIG = '.ci/ci.yml'
 @Field final String LEGACY_CONFIG  = 'ci.yml'
@@ -24,6 +25,7 @@ def call(Map args = [:]) {
     String configPath = (args?.configPath ?: '').toString().trim()
     PipelineHelper pipelineHelper = new PipelineHelper(this)
     PipelineStateFactory stateFactory = new PipelineStateFactory(this, pipelineHelper)
+    String workspaceStash = "ciV1-workspace-${UUID.randomUUID().toString()}"
 
     node(args?.bootstrapLabel ?: '') {
         checkout scm
@@ -46,6 +48,7 @@ def call(Map args = [:]) {
             error "Pipeline config version must be 1 (found ${version})"
         }
         baseEnv = (rawCfg.env ?: [:]).collect { k, v -> "${k}=${v}" }
+        stash name: workspaceStash, includes: '**/*', useDefaultExcludes: false
     }
 
     def validation = ConfigValidator.validate(rawCfg)
@@ -62,6 +65,8 @@ def call(Map args = [:]) {
     Map agent = cfg.agent
 
     def runCore = {
+        deleteDir()
+        unstash workspaceStash
         final String ws = pwd()
         if (!ws?.trim()) {
             error "Workspace path is empty"
@@ -91,7 +96,6 @@ def call(Map args = [:]) {
             }
 
             withEnv(exportedEnv) {
-                checkout scm
                 if (fileExists('gradlew')) {
                     sh 'chmod +x ./gradlew'
                 }
@@ -112,26 +116,22 @@ def call(Map args = [:]) {
 
     if (agent.docker && agent.label) {
         node(agent.label) {
-            checkout scm
             docker.image(agent.docker).inside {
                 runCore()
             }
         }
     } else if (agent.docker) {
         node {
-            checkout scm
             docker.image(agent.docker).inside {
                 runCore()
             }
         }
     } else if (agent.label) {
         node(agent.label) {
-            checkout scm
             runCore()
         }
     } else {
         node {
-            checkout scm
             runCore()
         }
     }

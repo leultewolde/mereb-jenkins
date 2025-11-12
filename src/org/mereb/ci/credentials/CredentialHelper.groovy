@@ -66,11 +66,21 @@ class CredentialHelper implements Serializable {
         steps.withCredentials([
             steps.usernamePassword(credentialsId: id, usernameVariable: usernameEnv, passwordVariable: passwordEnv)
         ]) {
+            String username = readEnvValue(usernameEnv)
+            String password = readEnvValue(passwordEnv)
             Map creds = [
-                username: steps.env?.get(usernameEnv),
-                password: steps.env?.get(passwordEnv)
+                username: username,
+                password: password
             ]
             body.call(creds)
         }
+    }
+
+    private String readEnvValue(String name) {
+        if (!name?.trim()) {
+            return ''
+        }
+        String script = "printf '%s' \"\\$VAR\"".replace("VAR", name)
+        return steps.sh(script: script, returnStdout: true).trim()
     }
 }
