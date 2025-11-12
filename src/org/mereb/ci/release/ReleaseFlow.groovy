@@ -368,7 +368,9 @@ echo "Published GitHub release ${TAG} to ${REPO}"
 
         Closure restore = {
             if (hasRemote && originalUrl) {
-                steps.sh(script: 'git remote set-url "$REMOTE" "$URL"', env: [REMOTE: remote, URL: originalUrl])
+                steps.withEnv(["REMOTE=${remote}".toString(), "URL=${originalUrl}".toString()]) {
+                    steps.sh 'git remote set-url "$REMOTE" "$URL"'
+                }
             }
         }
 
@@ -380,7 +382,9 @@ echo "Published GitHub release ${TAG} to ${REPO}"
                     if (hasRemote && originalUrl) {
                         String tokenVal = resolveEnvVar(tokenEnv)
                         String updated = injectCredentialsIntoUrl(originalUrl, tokenUser, tokenVal ?: '')
-                        steps.sh(script: 'git remote set-url "$REMOTE" "$URL"', env: [REMOTE: remote, URL: updated])
+                        steps.withEnv(["REMOTE=${remote}".toString(), "URL=${updated}".toString()]) {
+                            steps.sh 'git remote set-url "$REMOTE" "$URL"'
+                        }
                     }
                     try {
                         body()
@@ -397,7 +401,9 @@ echo "Published GitHub release ${TAG} to ${REPO}"
                         String userVal = resolveEnvVar(userEnv) ?: ''
                         String passVal = resolveEnvVar(passEnv) ?: ''
                         String updated = injectCredentialsIntoUrl(originalUrl, userVal, passVal)
-                        steps.sh(script: 'git remote set-url "$REMOTE" "$URL"', env: [REMOTE: remote, URL: updated])
+                        steps.withEnv(["REMOTE=${remote}".toString(), "URL=${updated}".toString()]) {
+                            steps.sh 'git remote set-url "$REMOTE" "$URL"'
+                        }
                     }
                     try {
                         body()
