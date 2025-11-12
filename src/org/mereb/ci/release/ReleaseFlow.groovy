@@ -239,7 +239,9 @@ echo "Published GitHub release ${TAG} to ${REPO}"
         String user = (autoTag.gitUser ?: 'Mereb CI').toString()
         String email = (autoTag.gitEmail ?: 'ci@mereb.local').toString()
 
-        steps.sh "git fetch --tags --quiet ${shellEscape(remote)} || true"
+        withRepoCredential(autoTag) {
+            steps.sh "git fetch --tags --quiet ${shellEscape(remote)} || true"
+        }
 
         String pattern = "${prefix}[0-9]*"
         String latest = steps.sh(script: "git tag --list ${shellEscape(pattern)} --sort=-version:refname | head -n1", returnStdout: true).trim()
@@ -265,7 +267,9 @@ echo "Published GitHub release ${TAG} to ${REPO}"
         }
 
         if (push) {
-            steps.sh "git push ${shellEscape(remote)} ${shellEscape(nextTag)}"
+            withRepoCredential(autoTag) {
+                steps.sh "git push ${shellEscape(remote)} ${shellEscape(nextTag)}"
+            }
         } else {
             steps.echo "Auto-tag push disabled; created local tag ${nextTag}"
         }
@@ -323,7 +327,7 @@ echo "Published GitHub release ${TAG} to ${REPO}"
         }
     }
 
-    private void withReleaseCredentials(Map autoTag, Closure body) {
+    private void withRepoCredential(Map autoTag, Closure body) {
         Map cred = autoTag?.credential ?: [:]
         if (!cred.id) {
             body()
