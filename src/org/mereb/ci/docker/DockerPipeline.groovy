@@ -221,7 +221,7 @@ class DockerPipeline implements Serializable {
         }
 
         String hostSegment = registry ? " ${shellEscape(registry)}" : ''
-        steps.echo "Logging in to Docker registry '${registry}' using credential '${credentialId}'."
+        steps.echo "Logging in to Docker registry '${registry}' using credential '${credentialId}', username '${usernameEnv}'."
         steps.withCredentials([
             steps.usernamePassword(credentialsId: credentialId, usernameVariable: usernameEnv, passwordVariable: passwordEnv)
         ]) {
