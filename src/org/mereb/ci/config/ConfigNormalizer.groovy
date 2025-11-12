@@ -474,32 +474,33 @@ class ConfigNormalizer implements Serializable {
 
     private static Map normalizeReleaseCredential(Map dataInput) {
         Map data = mapCopy(dataInput)
+        Map source = mapCopy(dataInput)
         Map node = [:]
-        if (data.get('credential') instanceof Map) {
-            node.putAll(data.get('credential') as Map)
+        if (source.get('credential') instanceof Map) {
+            node.putAll(source.get('credential') as Map)
         }
-        String id = asString(data.get('credentialId') ?: node.get('id'))
+        String id = asString(source.get('credentialId') ?: node.get('id'))
         if (!id) {
             return [:]
         }
-        String type = asString(node.get('type') ?: data.get('credentialType') ?: 'usernamePassword')
+        String type = asString(node.get('type') ?: source.get('credentialType') ?: 'usernamePassword')
         switch (type) {
             case 'string':
                 return [
                     id      : id,
                     type    : 'string',
-                    tokenEnv: asString(node.get('tokenEnv') ?: data.get('tokenEnv') ?: 'GIT_TOKEN'),
-                    tokenUser: asString(node.get('tokenUser') ?: data.get('tokenUser') ?: 'x-access-token')
+                    tokenEnv: asString(node.get('tokenEnv') ?: source.get('tokenEnv') ?: 'GIT_TOKEN'),
+                    tokenUser: asString(node.get('tokenUser') ?: source.get('tokenUser') ?: 'x-access-token')
                 ]
             case 'usernamePassword':
             default:
                 return [
                     id          : id,
                     type        : 'usernamePassword',
-                    usernameEnv : asString(node.get('usernameEnv') ?: data.get('usernameEnv') ?: data.get('usernameVariable') ?: 'GIT_USERNAME'),
-                    passwordEnv : asString(node.get('passwordEnv') ?: data.get('passwordEnv') ?: data.get('passwordVariable') ?: 'GIT_PASSWORD'),
-                    tokenEnv    : asString(node.get('tokenEnv') ?: data.get('tokenEnv') ?: 'GIT_TOKEN'),
-                    tokenUser   : asString(node.get('tokenUser') ?: data.get('tokenUser') ?: 'x-access-token')
+                    usernameEnv : asString(node.get('usernameEnv') ?: source.get('usernameEnv') ?: source.get('usernameVariable') ?: 'GIT_USERNAME'),
+                    passwordEnv : asString(node.get('passwordEnv') ?: source.get('passwordEnv') ?: source.get('passwordVariable') ?: 'GIT_PASSWORD'),
+                    tokenEnv    : asString(node.get('tokenEnv') ?: source.get('tokenEnv') ?: 'GIT_TOKEN'),
+                    tokenUser   : asString(node.get('tokenUser') ?: source.get('tokenUser') ?: 'x-access-token')
                 ]
         }
     }
