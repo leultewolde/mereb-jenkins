@@ -41,7 +41,13 @@ class PnpmPreset implements Serializable {
             ]
         }
 
-        (cfg.tasks ?: []).each { Map task ->
+        Object rawTasks = cfg.get('tasks')
+        List taskList = rawTasks instanceof List ? (rawTasks as List) : []
+        for (Object taskObj : taskList) {
+            if (!(taskObj instanceof Map)) {
+                continue
+            }
+            Map task = taskObj as Map
             String pkgDir = (task.packageDir ?: cfg.packageDir ?: '.').toString().trim()
             if (!pkgDir) {
                 pkgDir = '.'
@@ -63,9 +69,9 @@ class PnpmPreset implements Serializable {
                 PNPM_ALLOW_WORKSPACE: PipelineUtils.boolString(task.workspace as Boolean)
             ]
             if (hasPackage) {
-                envMap.PNPM_PACKAGE_NAME = packageName
+                envMap.put('PNPM_PACKAGE_NAME', packageName)
             }
-            envMap.PNPM_STAGE_LABEL = stageLabel
+            envMap.put('PNPM_STAGE_LABEL', stageLabel)
 
             stages << [
                 name: stageLabel,
@@ -84,20 +90,24 @@ class PnpmPreset implements Serializable {
         Map data = raw as Map
         Map stageNames = [:]
         if (data.stageNames instanceof Map) {
-            (data.stageNames as Map).each { k, v ->
+            Map rawStageNames = data.stageNames as Map
+            for (Object entryObj : rawStageNames.entrySet()) {
+                Map.Entry entry = entryObj as Map.Entry
+                Object k = entry.key
+                Object v = entry.value
                 if (k != null && v != null) {
-                    stageNames[k.toString()] = v.toString()
+                    stageNames.put(k.toString(), v.toString())
                 }
             }
         }
         if (data.bootstrapStageName) {
-            stageNames['bootstrap'] = data.bootstrapStageName.toString()
+            stageNames.put('bootstrap', data.bootstrapStageName.toString())
         }
         if (data.prepareStageName) {
-            stageNames['prepare'] = data.prepareStageName.toString()
+            stageNames.put('prepare', data.prepareStageName.toString())
         }
         if (data.installStageName) {
-            stageNames['install'] = data.installStageName.toString()
+            stageNames.put('install', data.installStageName.toString())
         }
 
         List<Map> tasks = normalizeTasks(data.steps ?: data.tasks ?: data.run)
@@ -135,15 +145,15 @@ class PnpmPreset implements Serializable {
         }
 
         List<Map> tasks = []
-        entries.each { Object entry ->
+        for (Object entry : entries) {
             if (entry == null) {
-                return
+                continue
             }
             if (entry instanceof Map) {
                 Map stage = entry as Map
                 String type = (stage.type ?: stage.step ?: stage.kind ?: stage.task ?: stage.action)?.toString()?.trim()
                 if (!type) {
-                    return
+                    continue
                 }
                 String stageName = (stage.stageName ?: stage.displayName ?: stage.label ?: stage.title)?.toString()
                 if (!stageName && stage.name && stage.name?.toString()?.trim() && stage.name?.toString()?.trim() != type) {
@@ -165,7 +175,7 @@ class PnpmPreset implements Serializable {
             } else {
                 String type = entry.toString().trim()
                 if (!type) {
-                    return
+                    continue
                 }
                 tasks << [
                     type        : type,
@@ -181,8 +191,9 @@ class PnpmPreset implements Serializable {
     }
 
     private static String stageName(Map cfg, String key, String fallback) {
-        Map names = cfg.stageNames ?: [:]
-        String value = names[key]
+        Object namesObj = (cfg instanceof Map) ? (cfg as Map).get('stageNames') : null
+        Map names = namesObj instanceof Map ? (namesObj as Map) : [:]
+        Object value = names.get(key)
         return value ? value : fallback
     }
 
@@ -335,14 +346,26 @@ USE_FILTER="${PNPM_USE_FILTER:-true}"
 ALLOW_WORKSPACE="${PNPM_ALLOW_WORKSPACE:-true}"
 LABEL="${PNPM_STAGE_LABEL:-pnpm command}"
 ''')
-        skipPatterns?.findAll { it }.eachWithIndex { pattern, idx ->
-            sb.append("FILE_${idx}=${pattern}\n")
+        if (skipPatterns) {
+            int idx = 0
+            for (String pattern : skipPatterns) {
+                if (!pattern) {
+                    continue
+                }
+                sb.append("FILE_${idx}=${pattern}\n")
+                idx++
+            }
         }
         sb.append('''
 missing_required="false"
 ''')
-        skipPatterns?.findAll { it }.eachWithIndex { pattern, idx ->
-            sb.append("if [ ! -e \"${pattern}\" ]; then missing_required=\"true\"; fi\n")
+        if (skipPatterns) {
+            for (String pattern : skipPatterns) {
+                if (!pattern) {
+                    continue
+                }
+                sb.append("if [ ! -e \"${pattern}\" ]; then missing_required=\"true\"; fi\n")
+            }
         }
         sb.append('''
 if [ "${missing_required}" = "true" ]; then
