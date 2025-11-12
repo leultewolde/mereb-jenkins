@@ -227,7 +227,7 @@ class DockerPipeline implements Serializable {
         ]) {
             String passRef = '\\$' + passwordEnv
             String userRef = '\\$' + usernameEnv
-            steps.sh "printf %s \"${passRef}\" | docker login${hostSegment} -u \"${userRef}\" --password-stdin"
+            steps.sh "echo \"${passRef}\" | docker login${hostSegment} -u \"${userRef}\" --password-stdin"
         }
     }
 
