@@ -1,6 +1,7 @@
 plugins {
     id 'groovy'
     id 'checkstyle'
+    id 'com.mkobit.jenkins.pipelines.shared-library'
 }
 
 group = 'com.leultewolde'
@@ -8,10 +9,12 @@ version = '1.0-SNAPSHOT'
 
 repositories {
     mavenCentral()
+    maven { url 'https://repo.jenkins-ci.org/releases/' }
 }
 
 dependencies {
     implementation 'org.apache.groovy:groovy:5.0.0'
+    implementation 'org.apache.groovy:groovy-json:5.0.0'
     testImplementation platform('org.junit:junit-bom:5.10.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -19,6 +22,11 @@ dependencies {
 
 test {
     useJUnitPlatform()
+}
+
+jenkinsSharedLibrary {
+    coreVersion = '2.426.3'
+    testHarnessVersion = 'latest'
 }
 
 checkstyle {
@@ -32,3 +40,41 @@ tasks.withType(Checkstyle).configureEach {
         html.outputLocation = layout.buildDirectory.file("reports/checkstyle/${name}.html")
     }
 }
+
+sourceSets {
+    main {
+        groovy {
+            srcDirs = ['src']
+            exclude 'test/**'
+            exclude 'integrationTest/**'
+        }
+    }
+    test {
+        groovy {
+            srcDirs = ['src/test/groovy']
+        }
+    }
+    integrationTest {
+        groovy {
+            srcDirs = ['src/integrationTest/groovy']
+        }
+        resources.srcDir 'src/integrationTest/resources'
+        compileClasspath += sourceSets.main.output + configurations.testRuntimeClasspath
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+configurations {
+    integrationTestImplementation.extendsFrom testImplementation
+    integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+task integrationTest(type: Test) {
+    description = 'Runs integration tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.integrationTest.output.classesDirs
+    classpath = sourceSets.integrationTest.runtimeClasspath
+    shouldRunAfter test
+}
+
+check.dependsOn integrationTest

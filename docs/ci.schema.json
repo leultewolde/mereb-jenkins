@@ -1,0 +1,299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mereb.dev/ci.schema.json",
+  "title": "Mereb CI configuration",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "preset": {
+      "type": "string",
+      "enum": ["node", "pnpm", "java-gradle"]
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "label": { "type": "string" },
+        "docker": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "app": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "chart": { "type": "string" },
+        "namespace": { "type": "string" },
+        "registry": { "type": "string" }
+      }
+    },
+    "build": {
+      "type": "object",
+      "properties": {
+        "preset": { "$ref": "#/properties/preset" },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "verb": { "type": "string" },
+              "sh": { "type": "string" },
+              "env": { "type": "object", "additionalProperties": { "type": "string" } }
+            },
+            "oneOf": [
+              { "required": ["verb"] },
+              { "required": ["sh"] }
+            ]
+          }
+        },
+        "pnpm": { "$ref": "#/definitions/pnpmPreset" }
+      },
+      "additionalProperties": true
+    },
+    "matrix": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "image": {
+      "oneOf": [
+        { "type": "boolean" },
+        {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "context": { "type": "string" },
+            "dockerfile": { "type": "string" },
+            "sbom": { "$ref": "#/definitions/sbom" },
+            "scan": { "$ref": "#/definitions/scan" },
+            "signing": { "$ref": "#/definitions/signing" },
+            "platforms": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "push": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "when": { "type": "string" },
+                "credentials": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "usernameEnv": { "type": "string" },
+                    "passwordEnv": { "type": "string" }
+                  },
+                  "required": ["id"],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "required": ["repository"]
+        }
+      ]
+    },
+    "deploy": { "$ref": "#/definitions/environments" },
+    "terraform": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string" },
+        "autoInstall": { "type": "boolean" },
+        "version": { "type": "string" },
+        "environments": { "$ref": "#/definitions/terraformEnvironments" }
+      },
+      "additionalProperties": true
+    },
+    "release": {
+      "type": "object",
+      "properties": {
+        "autoTag": { "$ref": "#/definitions/autoTag" },
+        "github": { "$ref": "#/definitions/githubRelease" }
+      }
+    }
+  },
+  "required": ["version"],
+  "additionalProperties": true,
+  "definitions": {
+    "pnpmPreset": {
+      "type": "object",
+      "properties": {
+        "packageDir": { "type": "string" },
+        "packageName": { "type": "string" },
+        "lockfile": { "type": "string" },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "name": { "type": "string" },
+              "command": { "type": "string" }
+            },
+            "required": ["type"]
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "environments": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "chart": { "type": "string" },
+          "namespace": { "type": "string" },
+          "repo": { "type": "string" },
+          "repoCredentials": { "$ref": "#/definitions/repoCredentials" },
+          "when": { "type": "string" },
+          "values": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "valuesFiles": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "set": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "setString": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "setFile": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "approval": { "$ref": "#/definitions/approval" },
+          "autoPromote": { "type": "boolean" },
+          "kubeContext": { "type": "string" },
+          "kubeconfig": { "type": "string" },
+          "repoUsername": { "type": "string" },
+          "repoPassword": { "type": "string" },
+          "wait": { "type": "boolean" },
+          "atomic": { "type": "boolean" },
+          "timeout": { "type": "string" },
+          "smoke": {
+            "type": "object",
+            "properties": {
+              "url": { "type": "string", "format": "uri" },
+              "script": { "type": "string" }
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "terraformEnvironments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "displayName": { "type": "string" },
+          "when": { "type": "string" },
+          "vars": {
+            "type": "object",
+            "additionalProperties": { "type": ["string", "number", "boolean"] }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "autoTag": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "when": { "type": "string" },
+        "bump": { "type": "string", "enum": ["major", "minor", "patch"] },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "type": { "type": "string", "enum": ["string", "usernamePassword"] }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "githubRelease": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "when": { "type": "string" },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "type": { "type": "string", "enum": ["string", "usernamePassword"] }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "sbom": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "format": { "type": "string" },
+        "output": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "scan": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "failOn": { "type": "string" },
+        "flags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "signing": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "when": { "type": "string" },
+        "key": { "type": "string" },
+        "keyless": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "repoCredentials": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "usernameEnv": { "type": "string" },
+        "passwordEnv": { "type": "string" }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+    "approval": {
+      "type": "object",
+      "properties": {
+        "message": { "type": "string" },
+        "before": { "type": "boolean" },
+        "ok": { "type": "string" },
+        "submitter": { "type": ["string", "array"] }
+      },
+      "additionalProperties": true
+    }
+  }
+}
