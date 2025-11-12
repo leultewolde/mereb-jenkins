@@ -1,6 +1,7 @@
 package org.mereb.ci.config
 
 import org.mereb.ci.build.PnpmPreset
+import java.util.ArrayList
 
 import static org.mereb.ci.util.PipelineUtils.toStringList
 import static org.mereb.ci.util.PipelineUtils.toStringMap
@@ -11,36 +12,44 @@ import static org.mereb.ci.util.PipelineUtils.toStringMap
 class ConfigNormalizer implements Serializable {
 
     static Map normalize(Map raw, List<String> defaultEnvOrder, String primaryConfig) {
-        Map source = raw ?: [:]
+        Map source = mapCopy(raw)
         Map cfg = [:]
 
+        Map agentSection = mapCopy(source.get('agent'))
         cfg.agent = [
-            label : (source.agent?.label ?: '').toString().trim(),
-            docker: (source.agent?.docker ?: '').toString().trim()
+            label : asString(agentSection.get('label')).trim(),
+            docker: asString(agentSection.get('docker')).trim()
         ]
 
-        Map buildSection = source.build instanceof Map ? new LinkedHashMap(source.build as Map) : [:]
-        if (!(buildSection.containsKey('pnpm')) && source.pnpm) {
-            buildSection = buildSection ? new LinkedHashMap(buildSection) : [:]
-            buildSection.pnpm = source.pnpm
+        Map buildSection = mapCopy(source.get('build'))
+        Object pnpmSection = source.get('pnpm')
+        if (!buildSection.containsKey('pnpm') && pnpmSection != null) {
+            buildSection.put('pnpm', pnpmSection)
         }
 
-        cfg.preset = (source.preset ?: source.build?.preset ?: 'node').toString()
-        if (!(buildSection.containsKey('pnpm')) && cfg.preset.equalsIgnoreCase('pnpm')) {
-            buildSection = buildSection ? new LinkedHashMap(buildSection) : [:]
-            buildSection.pnpm = [:]
+        String preset = asString(source.get('preset'))
+        if (!preset) {
+            preset = asString(buildSection.get('preset'))
+        }
+        if (!preset) {
+            preset = 'node'
+        }
+        cfg.preset = preset
+
+        if (!buildSection.containsKey('pnpm') && 'pnpm'.equalsIgnoreCase(preset)) {
+            buildSection.put('pnpm', [:])
         }
 
-        cfg.matrix = normalizeMatrix(source.matrix)
-        cfg.buildStages = computeBuildStages(cfg.preset, buildSection)
-        cfg.requiresGradleHome = needsGradleHome(cfg.preset, cfg.buildStages)
-        cfg.releaseStages = normalizeUserStages(source.releaseStages)
+        cfg.matrix = normalizeMatrix(source.get('matrix'))
+        cfg.buildStages = computeBuildStages(preset, buildSection)
+        cfg.requiresGradleHome = needsGradleHome(preset, cfg.buildStages)
+        cfg.releaseStages = normalizeUserStages(source.get('releaseStages'))
         cfg.image = normalizeImage(source, primaryConfig)
-        cfg.sbom = normalizeSbom(source.sbom)
-        cfg.scan = normalizeScan(source.scan)
-        cfg.signing = normalizeSigning(source.signing, cfg.image)
-        cfg.terraform = normalizeTerraform(source.terraform)
-        cfg.release = normalizeRelease(source.release)
+        cfg.sbom = normalizeSbom(source.get('sbom'))
+        cfg.scan = normalizeScan(source.get('scan'))
+        cfg.signing = normalizeSigning(source.get('signing'), cfg.image)
+        cfg.terraform = normalizeTerraform(source.get('terraform'))
+        cfg.release = normalizeRelease(source.get('release'))
         cfg.deploy = normalizeDeploy(source, defaultEnvOrder)
 
         return cfg
@@ -61,33 +70,62 @@ class ConfigNormalizer implements Serializable {
         if (!(raw instanceof Map)) {
             return result
         }
-        (raw as Map).each { k, v ->
+        Map matrix = raw as Map
+        for (Object entryObj : matrix.entrySet()) {
+            Map.Entry entry = entryObj as Map.Entry
+            Object key = entry.key
+            Object value = entry.value
             List<String> entries = []
-            if (v instanceof List) {
-                v.each { entries << it.toString() }
-            } else if (v != null) {
-                entries << v.toString()
+            if (value instanceof List) {
+                for (Object item : (List) value) {
+                    if (item != null) {
+                        entries << item.toString()
+                    }
+                }
+            } else if (value != null) {
+                entries << value.toString()
             }
-            result[k.toString()] = entries
+            result.put(key?.toString(), entries)
         }
         return result
     }
 
     private static List<Map> computeBuildStages(String preset, Object buildCfgRaw) {
-        Map buildCfg = buildCfgRaw instanceof Map ? buildCfgRaw : [:]
-        if (buildCfg.stages instanceof List && buildCfg.stages) {
-            return (buildCfg.stages as List).collect { Map stage ->
-                [
-                    name       : stage.name?.toString() ?: 'Build',
-                    verb       : stage.verb?.toString(),
-                    sh         : stage.sh?.toString(),
-                    env        : toStringMap(stage.env),
-                    credentials: normalizeCredentialList(stage.credentials)
+        Map buildCfg = mapCopy(buildCfgRaw)
+        Object stagesRaw = buildCfg.get('stages')
+        if (stagesRaw instanceof List && !((List) stagesRaw).isEmpty()) {
+            List<Map> result = []
+            for (Object stageObj : (List) stagesRaw) {
+                if (!(stageObj instanceof Map)) {
+                    continue
+                }
+                Map stage = stageObj as Map
+                String stageName = asString(stage.get('name'))
+                if (!stageName) {
+                    stageName = 'Build'
+                }
+                String verb = asString(stage.get('verb'))
+                if (!verb) {
+                    verb = null
+                }
+                String script = asString(stage.get('sh'))
+                if (!script) {
+                    script = null
+                }
+                Map normalized = [
+                    name       : stageName,
+                    verb       : verb,
+                    sh         : script,
+                    env        : toStringMap(stage.get('env')),
+                    credentials: normalizeCredentialList(stage.get('credentials'))
                 ]
+                result << normalized
             }
+            return result
         }
-        if (buildCfg.pnpm) {
-            return PnpmPreset.buildStages(buildCfg.pnpm)
+        Object pnpmCfg = buildCfg.get('pnpm')
+        if (pnpmCfg) {
+            return PnpmPreset.buildStages(pnpmCfg)
         }
 
         switch (preset) {
@@ -112,21 +150,23 @@ class ConfigNormalizer implements Serializable {
             return []
         }
         List<Map> creds = []
-        (raw as List).each { Object node ->
+        for (Object node : (List) raw) {
             if (!(node instanceof Map)) {
-                return
+                continue
             }
             Map cred = node as Map
             Map normalized = [
-                id : cred.id?.toString(),
-                env: cred.env?.toString(),
-                type: (cred.type ?: 'string').toString()
+                id  : asString(cred.get('id')),
+                env : asString(cred.get('env')),
+                type: asString(cred.get('type') ?: 'string')
             ]
-            if (cred.usernameEnv || cred.usernameVariable) {
-                normalized.usernameEnv = (cred.usernameEnv ?: cred.usernameVariable).toString()
+            Object usernameEnv = cred.get('usernameEnv') ?: cred.get('usernameVariable')
+            if (usernameEnv) {
+                normalized.usernameEnv = usernameEnv.toString()
             }
-            if (cred.passwordEnv || cred.passwordVariable) {
-                normalized.passwordEnv = (cred.passwordEnv ?: cred.passwordVariable).toString()
+            Object passwordEnv = cred.get('passwordEnv') ?: cred.get('passwordVariable')
+            if (passwordEnv) {
+                normalized.passwordEnv = passwordEnv.toString()
             }
             creds << normalized
         }
@@ -134,9 +174,10 @@ class ConfigNormalizer implements Serializable {
     }
 
     private static Map normalizeImage(Map raw, String primaryConfig) {
-        Map app = raw.app instanceof Map ? raw.app : [:]
-        Object imageSection = raw.image
-        Map imageRaw = imageSection instanceof Map ? imageSection : [:]
+        Map source = mapCopy(raw)
+        Map app = mapCopy(source.get('app'))
+        Object imageSection = source.get('image')
+        Map imageRaw = imageSection instanceof Map ? mapCopy(imageSection) : [:]
 
         boolean enabled = true
         if (imageSection instanceof Boolean) {
@@ -145,19 +186,19 @@ class ConfigNormalizer implements Serializable {
             enabled = imageRaw.enabled as Boolean
         }
 
-        Map pushRaw = imageRaw.push instanceof Map ? imageRaw.push : [:]
+        Map pushRaw = imageRaw.get('push') instanceof Map ? mapCopy(imageRaw.get('push')) : [:]
 
         if (!enabled) {
             return [
                 enabled    : false,
                 repository : '',
-                context    : (imageRaw.context ?: '.').toString(),
-                dockerfile : (imageRaw.dockerfile ?: 'Dockerfile').toString(),
-                buildArgs  : toStringMap(imageRaw.buildArgs),
-                buildFlags : toStringList(imageRaw.buildFlags),
-                platforms  : toStringList(imageRaw.platforms),
-                tagStrategy: (imageRaw.tagStrategy ?: 'branch-sha').toString(),
-                tagTemplate: imageRaw.tagTemplate ?: imageRaw.tag,
+                context    : asString(imageRaw.get('context') ?: '.'),
+                dockerfile : asString(imageRaw.get('dockerfile') ?: 'Dockerfile'),
+                buildArgs  : toStringMap(imageRaw.get('buildArgs')),
+                buildFlags : toStringList(imageRaw.get('buildFlags')),
+                platforms  : toStringList(imageRaw.get('platforms')),
+                tagStrategy: asString(imageRaw.get('tagStrategy') ?: 'branch-sha'),
+                tagTemplate: imageRaw.get('tagTemplate') ?: imageRaw.get('tag'),
                 push       : [
                     enabled  : false,
                     when     : (pushRaw.when ?: imageRaw.pushWhen ?: '!pr').toString(),
@@ -166,13 +207,13 @@ class ConfigNormalizer implements Serializable {
             ]
         }
 
-        String repository = (imageRaw.repository ?: '').toString().trim()
+        String repository = asString(imageRaw.get('repository')).trim()
         if (!repository) {
-            String imageName = (imageRaw.name ?: app.image ?: app.name ?: '').toString().trim()
+            String imageName = asString(imageRaw.get('name') ?: app.get('image') ?: app.get('name')).trim()
             if (!imageName) {
                 throw new IllegalArgumentException("image.repository or app.name must be defined in ${primaryConfig}")
             }
-            String registry = (imageRaw.registry ?: app.registry ?: '').toString().trim()
+            String registry = asString(imageRaw.get('registry') ?: app.get('registry')).trim()
             if (registry) {
                 String cleaned = registry.replaceAll(/\/+$/, '')
                 repository = cleaned ? "${cleaned}/${imageName}" : imageName
@@ -181,7 +222,7 @@ class ConfigNormalizer implements Serializable {
             }
         }
 
-        String registryOverride = (imageRaw.registry ?: '').toString().trim()
+        String registryOverride = asString(imageRaw.get('registry')).trim()
         String derivedRegistryHost = deriveRegistryHost(repository)
         if (registryOverride) {
             derivedRegistryHost = registryOverride
@@ -191,23 +232,25 @@ class ConfigNormalizer implements Serializable {
             enabled      : true,
             repository   : repository,
             registryHost : derivedRegistryHost,
-            context      : (imageRaw.context ?: '.').toString(),
-            dockerfile   : (imageRaw.dockerfile ?: 'Dockerfile').toString(),
-            buildArgs    : toStringMap(imageRaw.buildArgs),
-            buildFlags   : toStringList(imageRaw.buildFlags),
-            platforms    : toStringList(imageRaw.platforms),
-            tagStrategy  : (imageRaw.tagStrategy ?: 'branch-sha').toString(),
-            tagTemplate  : imageRaw.tagTemplate ?: imageRaw.tag
+            context      : asString(imageRaw.get('context') ?: '.'),
+            dockerfile   : asString(imageRaw.get('dockerfile') ?: 'Dockerfile'),
+            buildArgs    : toStringMap(imageRaw.get('buildArgs')),
+            buildFlags   : toStringList(imageRaw.get('buildFlags')),
+            platforms    : toStringList(imageRaw.get('platforms')),
+            tagStrategy  : asString(imageRaw.get('tagStrategy') ?: 'branch-sha'),
+            tagTemplate  : imageRaw.get('tagTemplate') ?: imageRaw.get('tag')
         ]
 
         imageCfg.push = [
-            enabled  : pushRaw.enabled == null ? true : pushRaw.enabled as Boolean,
-            when     : (pushRaw.when ?: imageRaw.pushWhen ?: '!pr').toString(),
-            extraTags: toStringList(pushRaw.extraTags ?: imageRaw.extraTags),
-            registry : (pushRaw.registry ?: '').toString().trim()
+            enabled  : pushRaw.get('enabled') == null ? true : (pushRaw.get('enabled') as Boolean),
+            when     : asString(pushRaw.get('when') ?: imageRaw.get('pushWhen') ?: '!pr'),
+            extraTags: toStringList(pushRaw.get('extraTags') ?: imageRaw.get('extraTags')),
+            registry : asString(pushRaw.get('registry') ?: '').trim()
         ]
 
-        String pushCredentialId = (pushRaw.credentialsId ?: pushRaw.credentialId ?: pushRaw.credential ?: pushRaw.id ?: '').toString().trim()
+        String pushCredentialId = asString(
+            pushRaw.get('credentialsId') ?: pushRaw.get('credentialId') ?: pushRaw.get('credential') ?: pushRaw.get('id')
+        ).trim()
         if (pushCredentialId) {
             imageCfg.push.credentials = [
                 id         : pushCredentialId,
@@ -236,71 +279,82 @@ class ConfigNormalizer implements Serializable {
     }
 
     private static Map normalizeSbom(Object raw) {
-        Map cfg = raw instanceof Map ? raw : [:]
-        boolean enabled = cfg.enabled == null ? true : cfg.enabled as Boolean
+        Map cfg = mapCopy(raw)
+        boolean enabled = cfg.get('enabled') == null ? true : (cfg.get('enabled') as Boolean)
         return [
             enabled: enabled,
-            format : (cfg.format ?: 'cyclonedx-json').toString(),
-            output : (cfg.output ?: 'reports/sbom-{{imageTag}}.json').toString()
+            format : asString(cfg.get('format') ?: 'cyclonedx-json'),
+            output : asString(cfg.get('output') ?: 'reports/sbom-{{imageTag}}.json')
         ]
     }
 
     private static Map normalizeScan(Object raw) {
-        Map cfg = raw instanceof Map ? raw : [:]
-        boolean enabled = cfg.enabled == null ? true : cfg.enabled as Boolean
+        Map cfg = mapCopy(raw)
+        boolean enabled = cfg.get('enabled') == null ? true : (cfg.get('enabled') as Boolean)
         return [
             enabled: enabled,
-            failOn : (cfg.failOn ?: 'critical').toString(),
-            flags  : toStringList(cfg.flags ?: cfg.additionalFlags)
+            failOn : asString(cfg.get('failOn') ?: 'critical'),
+            flags  : toStringList(cfg.get('flags') ?: cfg.get('additionalFlags'))
         ]
     }
 
     private static Map normalizeSigning(Object raw, Map imageCfg) {
-        Map cfg = raw instanceof Map ? raw : [:]
-        boolean enabled = cfg.enabled == null ? false : cfg.enabled as Boolean
+        Map cfg = mapCopy(raw)
+        boolean enabled = cfg.get('enabled') == null ? false : (cfg.get('enabled') as Boolean)
         if (!(imageCfg.enabled as Boolean)) {
             enabled = false
         }
         return [
             enabled : enabled,
-            when    : (cfg.when ?: imageCfg.push.when).toString(),
-            key     : cfg.key,
-            keyless : cfg.keyless ? cfg.keyless as Boolean : false,
-            identity: (cfg.identity ?: (imageCfg.repository ?: '')).toString(),
-            flags   : toStringList(cfg.flags),
-            env     : toStringMap(cfg.env)
+            when    : asString(cfg.get('when') ?: imageCfg.push.when),
+            key     : cfg.get('key'),
+            keyless : cfg.get('keyless') ? (cfg.get('keyless') as Boolean) : false,
+            identity: asString(cfg.get('identity') ?: (imageCfg.repository ?: '')),
+            flags   : toStringList(cfg.get('flags')),
+            env     : toStringMap(cfg.get('env'))
         ]
     }
 
     private static Map normalizeTerraform(Object raw) {
-        Map section = raw instanceof Map ? raw : [:]
+        Map section = mapCopy(raw)
         Map envs = [:]
-        if (section.environments instanceof Map) {
-            (section.environments as Map).each { k, v ->
-                envs[k.toString()] = normalizeTerraformEnvironment(k.toString(), v)
+        Object envNode = section.get('environments')
+        if (envNode instanceof Map) {
+            Map envMap = envNode as Map
+            for (Object entryObj : envMap.entrySet()) {
+                Map.Entry entry = entryObj as Map.Entry
+                String key = entry.key?.toString()
+                envs.put(key, normalizeTerraformEnvironment(key, entry.value))
             }
         }
 
         List<String> order = []
-        if (section.order instanceof List && section.order) {
-            section.order.each { order << it.toString() }
+        Object orderNode = section.get('order')
+        if (orderNode instanceof List && !((List) orderNode).isEmpty()) {
+            for (Object item : (List) orderNode) {
+                if (item != null) {
+                    order << item.toString()
+                }
+            }
         } else {
-            envs.keySet().each { order << it }
+            for (String name : envs.keySet()) {
+                order << name
+            }
         }
 
-        boolean autoInstall = section.containsKey('autoInstall') ? section.autoInstall as Boolean : true
-        String installDir = (section.installDir ?: '.ci/bin').toString()
-        String version = (section.version ?: '1.6.6').toString()
+        boolean autoInstall = section.containsKey('autoInstall') ? (section.get('autoInstall') as Boolean) : true
+        String installDir = asString(section.get('installDir') ?: '.ci/bin')
+        String version = asString(section.get('version') ?: '1.6.6')
 
         return [
             enabled     : !envs.isEmpty(),
-            path        : (section.path ?: 'infra/platform/terraform').toString(),
-            binary      : (section.binary ?: 'terraform').toString(),
-            env         : toStringMap(section.env),
-            initArgs    : toStringList(section.initArgs),
-            planArgs    : toStringList(section.planArgs),
-            applyArgs   : toStringList(section.applyArgs),
-            backend     : toStringMap(section.backendConfig),
+            path        : asString(section.get('path') ?: 'infra/platform/terraform'),
+            binary      : asString(section.get('binary') ?: 'terraform'),
+            env         : toStringMap(section.get('env')),
+            initArgs    : toStringList(section.get('initArgs')),
+            planArgs    : toStringList(section.get('planArgs')),
+            applyArgs   : toStringList(section.get('applyArgs')),
+            backend     : toStringMap(section.get('backendConfig')),
             order       : order,
             environments: envs,
             autoInstall : autoInstall,
@@ -310,172 +364,183 @@ class ConfigNormalizer implements Serializable {
     }
 
     private static Map normalizeTerraformEnvironment(String name, Object raw) {
-        Map data = raw instanceof Map ? raw : [:]
+        Map data = mapCopy(raw)
         Map env = [
             name        : name,
-            displayName : (data.displayName ?: name.toUpperCase()).toString(),
-            when        : (data.when ?: '!pr').toString(),
-            vars        : toStringMap(data.vars),
-            env         : toStringMap(data.env),
-            backend     : toStringMap(data.backendConfig),
-            path        : data.path?.toString(),
-            workspace   : data.workspace?.toString(),
-            planOut     : data.planOut?.toString(),
-            initArgs    : toStringList(data.initArgs),
-            planArgs    : toStringList(data.planArgs),
-            applyArgs   : toStringList(data.applyArgs),
-            varFiles    : toStringList(data.varFiles),
-            autoApply   : data.containsKey('autoApply') ? data.autoApply as Boolean : true,
-            apply       : data.containsKey('apply') ? data.apply as Boolean : true,
-            kubeconfig  : data.kubeconfig,
-            kubeconfigEnv: data.kubeconfigEnv,
-            kubeconfigCredential: data.kubeconfigCredential,
-            kubeContext : data.kubeContext,
-            approval    : normalizeApproval(data.approval ?: data.approve),
-            credentials : data.credentials instanceof List ? data.credentials : [],
-            smoke       : normalizeSmoke(data.smoke)
+            displayName : asString(data.get('displayName') ?: name.toUpperCase()),
+            when        : asString(data.get('when') ?: '!pr'),
+            vars        : toStringMap(data.get('vars')),
+            env         : toStringMap(data.get('env')),
+            backend     : toStringMap(data.get('backendConfig')),
+            path        : data.get('path') != null ? data.get('path').toString() : null,
+            workspace   : data.get('workspace') != null ? data.get('workspace').toString() : null,
+            planOut     : data.get('planOut') != null ? data.get('planOut').toString() : null,
+            initArgs    : toStringList(data.get('initArgs')),
+            planArgs    : toStringList(data.get('planArgs')),
+            applyArgs   : toStringList(data.get('applyArgs')),
+            varFiles    : toStringList(data.get('varFiles')),
+            autoApply   : data.containsKey('autoApply') ? (data.get('autoApply') as Boolean) : true,
+            apply       : data.containsKey('apply') ? (data.get('apply') as Boolean) : true,
+            kubeconfig  : data.get('kubeconfig'),
+            kubeconfigEnv: data.get('kubeconfigEnv'),
+            kubeconfigCredential: data.get('kubeconfigCredential'),
+            kubeContext : data.get('kubeContext'),
+            approval    : normalizeApproval(data.get('approval') ?: data.get('approve')),
+            credentials : data.get('credentials') instanceof List ? data.get('credentials') : [],
+            smoke       : normalizeSmoke(data.get('smoke'))
         ]
         return env
     }
 
     private static Map normalizeRelease(Object raw) {
-        Map section = raw instanceof Map ? raw : [:]
-        Map autoTag = normalizeReleaseAutoTag(section.autoTag)
-        Map github = normalizeReleaseGithub(section.github, autoTag)
+        Map section = mapCopy(raw)
+        Map autoTag = normalizeReleaseAutoTag(section.get('autoTag'))
+        Map github = normalizeReleaseGithub(section.get('github'), autoTag)
         return [autoTag: autoTag, github: github]
     }
 
     private static Map normalizeReleaseAutoTag(Object raw) {
-        Map data = raw instanceof Map ? raw : [:]
+        Map data = mapCopy(raw)
         if (data.isEmpty()) {
             return [enabled: false]
         }
-        boolean enabled = data.containsKey('enabled') ? (data.enabled as Boolean) : true
-        String bumpValue = (data.bump ?: 'patch').toString().toLowerCase()
+        boolean enabled = data.containsKey('enabled') ? (data.get('enabled') as Boolean) : true
+        String bumpValue = asString(data.get('bump') ?: 'patch').toLowerCase()
         if (!(bumpValue in ['major', 'minor', 'patch'])) {
             bumpValue = 'patch'
         }
 
         Map credential = normalizeReleaseCredential(data)
-        String afterEnvRaw = data.afterEnvironment ?: data.afterEnv
+        String afterEnvRaw = data.get('afterEnvironment') ?: data.get('afterEnv')
         String afterEnv = afterEnvRaw ? afterEnvRaw.toString().trim().toLowerCase() : ''
 
         return [
             enabled        : enabled,
-            when           : (data.when ?: '!pr').toString(),
-            stageName      : (data.stageName ?: 'Create Release Tag').toString(),
-            prefix         : (data.prefix ?: 'v').toString(),
+            when           : asString(data.get('when') ?: '!pr'),
+            stageName      : asString(data.get('stageName') ?: 'Create Release Tag'),
+            prefix         : asString(data.get('prefix') ?: 'v'),
             bump           : bumpValue,
-            remote         : (data.remote ?: 'origin').toString(),
-            gitUser        : (data.gitUser ?: data.user)?.toString(),
-            gitEmail       : (data.gitEmail ?: data.email)?.toString(),
-            message        : data.message?.toString(),
-            annotated      : data.containsKey('annotated') ? data.annotated as Boolean : (data.containsKey('annotate') ? data.annotate as Boolean : false),
-            push           : data.containsKey('push') ? data.push as Boolean : true,
-            skipIfTagged   : data.containsKey('skipIfTagged') ? data.skipIfTagged as Boolean : true,
-            clean          : data.containsKey('clean') ? data.clean as Boolean : true,
-            allowDirty     : data.containsKey('allowDirty') ? data.allowDirty as Boolean : false,
+            remote         : asString(data.get('remote') ?: 'origin'),
+            gitUser        : asString(data.get('gitUser') ?: data.get('user')) ?: null,
+            gitEmail       : asString(data.get('gitEmail') ?: data.get('email')) ?: null,
+            message        : data.get('message') != null ? data.get('message').toString() : null,
+            annotated      : data.containsKey('annotated') ? (data.get('annotated') as Boolean) :
+                (data.containsKey('annotate') ? (data.get('annotate') as Boolean) : false),
+            push           : data.containsKey('push') ? (data.get('push') as Boolean) : true,
+            skipIfTagged   : data.containsKey('skipIfTagged') ? (data.get('skipIfTagged') as Boolean) : true,
+            clean          : data.containsKey('clean') ? (data.get('clean') as Boolean) : true,
+            allowDirty     : data.containsKey('allowDirty') ? (data.get('allowDirty') as Boolean) : false,
             credential     : credential,
-            env            : toStringMap(data.env),
+            env            : toStringMap(data.get('env')),
             afterEnvironment: afterEnv
         ]
     }
 
     private static Map normalizeReleaseGithub(Object raw, Map autoTag) {
-        Map data = raw instanceof Map ? raw : [:]
+        Map data = mapCopy(raw)
         if (data.isEmpty()) {
             return [enabled: false]
         }
-        boolean enabled = data.containsKey('enabled') ? data.enabled as Boolean : true
-        if (!data.containsKey('credentialId') && !(data.credential instanceof Map) && autoTag?.credential?.id) {
-            data = new HashMap(data)
-            data.put('credential', [
-                id         : autoTag.credential.id,
-                type       : autoTag.credential.type,
-                usernameEnv: autoTag.credential.usernameEnv,
-                passwordEnv: autoTag.credential.passwordEnv,
-                tokenEnv   : autoTag.credential.tokenEnv,
-                tokenUser  : autoTag.credential.tokenUser
-            ])
+        boolean enabled = data.containsKey('enabled') ? (data.get('enabled') as Boolean) : true
+        Map autoTagCredential = (autoTag != null && autoTag.get('credential') instanceof Map) ? (Map) autoTag.get('credential') : null
+        Object autoTagCredentialId = autoTagCredential?.get('id')
+        if (!data.containsKey('credentialId') && !(data.get('credential') instanceof Map) && autoTagCredentialId) {
+            Map credentialClone = [:]
+            credentialClone.id = autoTagCredential.get('id')
+            credentialClone.type = autoTagCredential.get('type')
+            credentialClone.usernameEnv = autoTagCredential.get('usernameEnv')
+            credentialClone.passwordEnv = autoTagCredential.get('passwordEnv')
+            credentialClone.tokenEnv = autoTagCredential.get('tokenEnv')
+            credentialClone.tokenUser = autoTagCredential.get('tokenUser')
+            data.put('credential', credentialClone)
         }
         Map credential = normalizeReleaseCredential(data)
 
         return [
             enabled             : enabled,
-            when                : (data.when ?: '!pr').toString(),
-            stageName           : (data.stageName ?: 'GitHub Release').toString(),
-            repo                : data.repo?.toString(),
-            apiUrl              : (data.apiUrl ?: 'https://api.github.com').toString(),
-            draft               : data.containsKey('draft') ? data.draft as Boolean : false,
-            prerelease          : data.containsKey('prerelease') ? data.prerelease as Boolean : false,
-            generateReleaseNotes: data.containsKey('generateReleaseNotes') ? data.generateReleaseNotes as Boolean : true,
-            nameTemplate        : data.nameTemplate?.toString(),
-            bodyTemplate        : data.bodyTemplate?.toString(),
-            discussionCategory  : data.discussionCategory?.toString(),
+            when                : asString(data.get('when') ?: '!pr'),
+            stageName           : asString(data.get('stageName') ?: 'GitHub Release'),
+            repo                : data.get('repo')?.toString(),
+            apiUrl              : asString(data.get('apiUrl') ?: 'https://api.github.com'),
+            draft               : data.containsKey('draft') ? (data.get('draft') as Boolean) : false,
+            prerelease          : data.containsKey('prerelease') ? (data.get('prerelease') as Boolean) : false,
+            generateReleaseNotes: data.containsKey('generateReleaseNotes') ? (data.get('generateReleaseNotes') as Boolean) : true,
+            nameTemplate        : data.get('nameTemplate')?.toString(),
+            bodyTemplate        : data.get('bodyTemplate')?.toString(),
+            discussionCategory  : data.get('discussionCategory')?.toString(),
             credential          : credential
         ]
     }
 
-    private static Map normalizeReleaseCredential(Map data) {
+    private static Map normalizeReleaseCredential(Map dataInput) {
+        Map data = mapCopy(dataInput)
         Map node = [:]
-        if (data.credential instanceof Map) {
-            node.putAll(data.credential as Map)
+        if (data.get('credential') instanceof Map) {
+            node.putAll(data.get('credential') as Map)
         }
-        String id = (data.credentialId ?: node.id)?.toString()
+        String id = asString(data.get('credentialId') ?: node.get('id'))
         if (!id) {
             return [:]
         }
-        String type = (node.type ?: data.credentialType ?: 'usernamePassword').toString()
+        String type = asString(node.get('type') ?: data.get('credentialType') ?: 'usernamePassword')
         switch (type) {
             case 'string':
                 return [
                     id      : id,
                     type    : 'string',
-                    tokenEnv: (node.tokenEnv ?: data.tokenEnv ?: 'GIT_TOKEN').toString(),
-                    tokenUser: (node.tokenUser ?: data.tokenUser ?: 'x-access-token').toString()
+                    tokenEnv: asString(node.get('tokenEnv') ?: data.get('tokenEnv') ?: 'GIT_TOKEN'),
+                    tokenUser: asString(node.get('tokenUser') ?: data.get('tokenUser') ?: 'x-access-token')
                 ]
             case 'usernamePassword':
             default:
                 return [
                     id          : id,
                     type        : 'usernamePassword',
-                    usernameEnv : (node.usernameEnv ?: data.usernameEnv ?: data.usernameVariable ?: 'GIT_USERNAME').toString(),
-                    passwordEnv : (node.passwordEnv ?: data.passwordEnv ?: data.passwordVariable ?: 'GIT_PASSWORD').toString(),
-                    tokenEnv    : (node.tokenEnv ?: data.tokenEnv ?: 'GIT_TOKEN').toString(),
-                    tokenUser   : (node.tokenUser ?: data.tokenUser ?: 'x-access-token').toString()
+                    usernameEnv : asString(node.get('usernameEnv') ?: data.get('usernameEnv') ?: data.get('usernameVariable') ?: 'GIT_USERNAME'),
+                    passwordEnv : asString(node.get('passwordEnv') ?: data.get('passwordEnv') ?: data.get('passwordVariable') ?: 'GIT_PASSWORD'),
+                    tokenEnv    : asString(node.get('tokenEnv') ?: data.get('tokenEnv') ?: 'GIT_TOKEN'),
+                    tokenUser   : asString(node.get('tokenUser') ?: data.get('tokenUser') ?: 'x-access-token')
                 ]
         }
     }
 
     private static Map normalizeDeploy(Map raw, List<String> defaultEnvOrder) {
+        Map source = mapCopy(raw)
         Map deploySection = [:]
-        if (raw.deploy instanceof Map) {
-            deploySection = raw.deploy
-        } else if (raw.environments instanceof Map) {
-            deploySection = raw.environments
+        if (source.get('deploy') instanceof Map) {
+            deploySection = mapCopy(source.get('deploy'))
+        } else if (source.get('environments') instanceof Map) {
+            deploySection = mapCopy(source.get('environments'))
         }
-        Map appCfg = raw.app instanceof Map ? raw.app : [:]
+        Map appCfg = mapCopy(source.get('app'))
         Map envs = [:]
 
-        deploySection.each { k, v ->
-            if (k == 'order') {
-                return
+        for (Object entryObj : deploySection.entrySet()) {
+            Map.Entry entry = entryObj as Map.Entry
+            Object key = entry.key
+            if ('order'.equals(key)) {
+                continue
             }
-            String name = k.toString()
-            Map envCfg = v instanceof Map ? v : [:]
-            envs[name] = normalizeEnvironment(name, envCfg, appCfg)
+            Map envCfg = mapCopy(entry.value)
+            String name = asString(key)
+            envs.put(name, normalizeEnvironment(name, envCfg, appCfg))
         }
 
         List<String> order = []
-        if (deploySection.order instanceof List && deploySection.order) {
-            deploySection.order.each { order << it.toString() }
+        Object orderNode = deploySection.get('order')
+        if (orderNode instanceof List && !((List) orderNode).isEmpty()) {
+            for (Object item : (List) orderNode) {
+                if (item != null) {
+                    order << item.toString()
+                }
+            }
         } else {
-            defaultEnvOrder.each { def candidate ->
+            for (String candidate : defaultEnvOrder) {
                 if (envs.containsKey(candidate) && !order.contains(candidate)) {
                     order << candidate
                 }
             }
-            envs.keySet().each { name ->
+            for (String name : envs.keySet()) {
                 if (!order.contains(name)) {
                     order << name
                 }
@@ -488,26 +553,32 @@ class ConfigNormalizer implements Serializable {
         ]
     }
 
-    private static Map normalizeEnvironment(String name, Map envCfg, Map appCfg) {
-        Map smoke = normalizeSmoke(envCfg.smoke)
-        Map approval = normalizeApproval(envCfg.approve ?: envCfg.approval)
+    private static Map normalizeEnvironment(String name, Map envCfgRaw, Map appCfgRaw) {
+        Map envCfg = mapCopy(envCfgRaw)
+        Map appCfg = mapCopy(appCfgRaw)
+        Map smoke = normalizeSmoke(envCfg.get('smoke'))
+        Map approval = normalizeApproval(envCfg.get('approve') ?: envCfg.get('approval'))
 
-        String display = (envCfg.displayName ?: name.toUpperCase()).toString()
-        String namespace = (envCfg.namespace ?: appCfg.namespace ?: 'apps').toString()
-        String release = (envCfg.release ?: appCfg.release ?: appCfg.name ?: name).toString()
-        String chart = (envCfg.chart ?: appCfg.chart ?: 'infra/charts/app-chart').toString()
+        String display = asString(envCfg.get('displayName'))
+        if (!display) {
+            display = name.toUpperCase()
+        }
+        String namespace = asString(envCfg.get('namespace') ?: appCfg.get('namespace') ?: 'apps')
+        String release = asString(envCfg.get('release') ?: appCfg.get('release') ?: appCfg.get('name') ?: name)
+        String chart = asString(envCfg.get('chart') ?: appCfg.get('chart') ?: 'infra/charts/app-chart')
 
-        Map repoCredsRaw = envCfg.repoCredentials instanceof Map ? envCfg.repoCredentials : [:]
-        String repoCredentialId = (
-            envCfg.repoCredentialId ? envCfg.repoCredentialId :
-            envCfg.repoCredential ? envCfg.repoCredential :
-            repoCredsRaw.id
-        )?.toString()
+        Map repoCredsRaw = envCfg.get('repoCredentials') instanceof Map ? mapCopy(envCfg.get('repoCredentials')) : [:]
+        String repoCredentialId = asString(
+            envCfg.get('repoCredentialId') ?: envCfg.get('repoCredential') ?: repoCredsRaw.get('id')
+        )
+        if (repoCredentialId && repoCredentialId.trim().isEmpty()) {
+            repoCredentialId = null
+        }
 
         Map repoCredentials = [:]
         if (repoCredentialId) {
-            String repoUserEnv = (repoCredsRaw.usernameEnv ?: repoCredsRaw.usernameVariable ?: 'HELM_REPO_USERNAME').toString()
-            String repoPassEnv = (repoCredsRaw.passwordEnv ?: repoCredsRaw.passwordVariable ?: 'HELM_REPO_PASSWORD').toString()
+            String repoUserEnv = asString(repoCredsRaw.get('usernameEnv') ?: repoCredsRaw.get('usernameVariable') ?: 'HELM_REPO_USERNAME')
+            String repoPassEnv = asString(repoCredsRaw.get('passwordEnv') ?: repoCredsRaw.get('passwordVariable') ?: 'HELM_REPO_PASSWORD')
             repoCredentials = [
                 id         : repoCredentialId,
                 usernameEnv: repoUserEnv,
@@ -515,31 +586,43 @@ class ConfigNormalizer implements Serializable {
             ]
         }
 
-        return [
-            name        : name,
-            displayName : display,
-            namespace   : namespace,
-            release     : release,
-            chart       : chart,
-            repo        : envCfg.repo ?: appCfg.repo,
-            chartVersion: envCfg.version ?: envCfg.chartVersion ?: appCfg.chartVersion,
-            valuesFiles : toStringList(envCfg.values ?: envCfg.valuesFiles),
-            set         : toStringMap(envCfg.set),
-            setString   : toStringMap(envCfg.setString),
-            setFile     : toStringMap(envCfg.setFile),
-            when        : (envCfg.when ?: defaultConditionFor(name)).toString(),
-            smoke       : smoke,
-            autoPromote : envCfg.autoPromote ? envCfg.autoPromote as Boolean : false,
-            approval    : approval,
-            kubeContext : envCfg.context ?: envCfg.kubeContext,
-            kubeconfig  : envCfg.kubeconfig,
-            repoUsername: envCfg.repoUsername ?: appCfg.repoUsername,
-            repoPassword: envCfg.repoPassword ?: appCfg.repoPassword,
+        List<String> valuesFiles = []
+        Object valuesNode = envCfg.get('valuesFiles') ?: envCfg.get('values')
+        if (valuesNode instanceof List) {
+            for (Object item : (List) valuesNode) {
+                if (item != null) {
+                    valuesFiles << item.toString()
+                }
+            }
+        }
+
+        Map result = [
+            name           : name,
+            displayName    : display,
+            namespace      : namespace,
+            release        : release,
+            chart          : chart,
+            repo           : envCfg.get('repo') ?: appCfg.get('repo'),
+            chartVersion   : envCfg.get('version') ?: envCfg.get('chartVersion') ?: appCfg.get('chartVersion'),
+            valuesFiles    : valuesFiles,
+            set            : toStringMap(envCfg.get('set')),
+            setString      : toStringMap(envCfg.get('setString')),
+            setFile        : toStringMap(envCfg.get('setFile')),
+            when           : asString(envCfg.get('when') ?: defaultConditionFor(name)),
+            smoke          : smoke,
+            autoPromote    : envCfg.get('autoPromote') ? (envCfg.get('autoPromote') as Boolean) : false,
+            approval       : approval,
+            kubeContext    : envCfg.get('context') ?: envCfg.get('kubeContext'),
+            kubeconfig     : envCfg.get('kubeconfig'),
+            repoUsername   : envCfg.get('repoUsername') ?: appCfg.get('repoUsername'),
+            repoPassword   : envCfg.get('repoPassword') ?: appCfg.get('repoPassword'),
             repoCredentials: repoCredentials,
-            wait        : envCfg.wait == null ? true : envCfg.wait as Boolean,
-            atomic      : envCfg.atomic == null ? true : envCfg.atomic as Boolean,
-            timeout     : (envCfg.timeout ?: appCfg.timeout ?: '10m').toString()
+            wait           : envCfg.get('wait') == null ? true : (envCfg.get('wait') as Boolean),
+            atomic         : envCfg.get('atomic') == null ? true : (envCfg.get('atomic') as Boolean),
+            timeout        : asString(envCfg.get('timeout') ?: appCfg.get('timeout') ?: '10m')
         ]
+
+        return result
     }
 
     private static String defaultConditionFor(String envName) {
@@ -562,15 +645,16 @@ class ConfigNormalizer implements Serializable {
     private static Map normalizeSmoke(Object raw) {
         if (!raw) return [:]
         if (raw instanceof Map) {
-            Map cfg = raw as Map
+            Map cfg = mapCopy(raw)
             Map result = [:]
-            if (cfg.url) result.url = cfg.url.toString()
-            if (cfg.script) result.script = cfg.script.toString()
-            if (cfg.command) result.command = cfg.command.toString()
-            if (cfg.cmd) result.command = cfg.cmd.toString()
-            result.retries = (cfg.retries ?: cfg.retry ?: 0) as Integer
-            result.delay = (cfg.delay ?: 5).toString()
-            result.timeout = (cfg.timeout ?: cfg.maxTime ?: '60s').toString()
+            if (cfg.get('url')) result.url = cfg.get('url').toString()
+            if (cfg.get('script')) result.script = cfg.get('script').toString()
+            if (cfg.get('command')) result.command = cfg.get('command').toString()
+            if (cfg.get('cmd')) result.command = cfg.get('cmd').toString()
+            Object retries = cfg.get('retries') ?: cfg.get('retry') ?: 0
+            result.retries = (retries ?: 0) as Integer
+            result.delay = asString(cfg.get('delay') ?: 5)
+            result.timeout = asString(cfg.get('timeout') ?: cfg.get('maxTime') ?: '60s')
             return result
         }
         String value = raw.toString()
@@ -583,18 +667,18 @@ class ConfigNormalizer implements Serializable {
     private static Map normalizeApproval(Object raw) {
         if (!raw) return [:]
         if (raw instanceof Map) {
-            Map cfg = raw as Map
+            Map cfg = mapCopy(raw)
             boolean before = false
             if (cfg.containsKey('before')) {
-                before = cfg.before as Boolean
+                before = cfg.get('before') as Boolean
             } else {
-                String timing = (cfg.timing ?: cfg.when ?: '').toString().trim().toLowerCase()
-                before = timing in ['pre', 'before', 'deploy']
+                String timing = asString(cfg.get('timing') ?: cfg.get('when')).trim().toLowerCase()
+                before = ['pre', 'before', 'deploy'].contains(timing)
             }
             return [
-                message  : (cfg.message ?: 'Approval required').toString(),
-                submitter: cfg.submitter ?: cfg.user ?: cfg.users,
-                ok       : (cfg.ok ?: 'Approve').toString(),
+                message  : asString(cfg.get('message') ?: 'Approval required'),
+                submitter: cfg.get('submitter') ?: cfg.get('user') ?: cfg.get('users'),
+                ok       : asString(cfg.get('ok') ?: 'Approve'),
                 before   : before
             ]
         }
@@ -616,19 +700,41 @@ class ConfigNormalizer implements Serializable {
             return []
         }
         List<Map> stages = []
-        (raw as List).each { Object entry ->
-            if (entry instanceof Map) {
-                Map stageCfg = entry as Map
-                stages << [
-                    name       : stageCfg.name?.toString() ?: 'Release Task',
-                    when       : stageCfg.when?.toString(),
-                    env        : toStringMap(stageCfg.env),
-                    verb       : stageCfg.verb?.toString(),
-                    sh         : stageCfg.sh?.toString(),
-                    credentials: stageCfg.credentials instanceof List ? stageCfg.credentials : []
-                ]
+        for (Object entry : (List) raw) {
+            if (!(entry instanceof Map)) {
+                continue
             }
+            Map stageCfg = mapCopy(entry)
+            Map normalized = [
+                name       : asString(stageCfg.get('name')) ?: 'Release Task',
+                when       : asString(stageCfg.get('when')) ?: null,
+                env        : toStringMap(stageCfg.get('env')),
+                verb       : asString(stageCfg.get('verb')) ?: null,
+                sh         : asString(stageCfg.get('sh')) ?: null,
+                credentials: stageCfg.get('credentials') instanceof List ? stageCfg.get('credentials') : []
+            ]
+            stages << normalized
         }
         return stages
+    }
+
+    private static Map mapCopy(Object candidate) {
+        if (candidate instanceof Map) {
+            Map copy = [:]
+            copy.putAll(candidate as Map)
+            return copy
+        }
+        return [:]
+    }
+
+    private static List listCopy(Object candidate) {
+        if (candidate instanceof List) {
+            return new ArrayList(candidate as List)
+        }
+        return []
+    }
+
+    private static String asString(Object value) {
+        return value == null ? '' : value.toString()
     }
 }

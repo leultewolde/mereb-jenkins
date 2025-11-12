@@ -49,13 +49,16 @@ class CredentialHelper implements Serializable {
     }
 
     void withRepoCredentials(Object rawCfg, Closure body) {
+        if (!body) {
+            return
+        }
         Map cfg = [:]
         if (rawCfg instanceof Map) {
             cfg.putAll(rawCfg as Map)
         }
         String id = (cfg.id ?: cfg.credentialsId ?: '').toString().trim()
         if (!id) {
-            callWithOptionalArg(body, [:])
+            body.call([:])
             return
         }
         String usernameEnv = (cfg.usernameEnv ?: 'HELM_REPO_USERNAME').toString()
@@ -67,18 +70,7 @@ class CredentialHelper implements Serializable {
                 username: steps.env[usernameEnv],
                 password: steps.env[passwordEnv]
             ]
-            callWithOptionalArg(body, creds)
-        }
-    }
-
-    private void callWithOptionalArg(Closure body, Map arg) {
-        if (!body) {
-            return
-        }
-        try {
-            body.call(arg ?: [:])
-        } catch (MissingMethodException | IllegalArgumentException ignored) {
-            body.call()
+            body.call(creds)
         }
     }
 }
