@@ -28,4 +28,15 @@ class PnpmPresetTest {
         List<Map> stages = PnpmPreset.buildStages(null)
         assertTrue(stages.isEmpty())
     }
+
+    @Test
+    void "install stage falls back to non frozen install when lockfile missing"() {
+        List<Map> stages = PnpmPreset.buildStages([:])
+        Map installStage = stages.find { it.name == 'Install dependencies' }
+
+        assertNotNull(installStage, 'expected install stage to exist')
+        String script = installStage.sh
+        assertTrue(script.contains('LOCK_EXISTS="true"'))
+        assertTrue(script.contains('Falling back to --no-frozen-lockfile because the lockfile is missing.'))
+    }
 }

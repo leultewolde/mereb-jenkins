@@ -297,15 +297,22 @@ fi
 PKG_DIR="${PNPM_PACKAGE_DIR:-.}"
 LOCK_PATH="${PNPM_LOCKFILE:-pnpm-lock.yaml}"
 WORKSPACE_INSTALL="${PNPM_WORKSPACE_INSTALL:-true}"
+LOCK_EXISTS="true"
 
 cd "${PKG_DIR}"
 
 if [ ! -f "${LOCK_PATH}" ]; then
   echo "Lockfile ${LOCK_PATH} not found in ${PKG_DIR}."
+  LOCK_EXISTS="false"
 fi
 
 if [ "${WORKSPACE_INSTALL}" = "true" ]; then
-  pnpm install --frozen-lockfile
+  if [ "${LOCK_EXISTS}" = "true" ]; then
+    pnpm install --frozen-lockfile
+  else
+    echo "Falling back to --no-frozen-lockfile because the lockfile is missing."
+    pnpm install --no-frozen-lockfile
+  fi
 else
   pnpm install --no-frozen-lockfile
 fi
