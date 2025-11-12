@@ -72,6 +72,7 @@ class ReleaseFlow implements Serializable {
         if (!(autoTag.enabled as Boolean)) {
             return
         }
+        steps.echo "AutoTag credential id: ${(autoTag?.credential?.id ?: 'none')}"
         if (!Helpers.matchCondition(autoTag.when as String, steps.env)) {
             steps.echo "Release auto-tag skipped by condition '${autoTag.when}'"
             return
