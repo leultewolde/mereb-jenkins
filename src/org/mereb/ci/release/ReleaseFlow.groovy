@@ -186,7 +186,7 @@ class ReleaseFlow implements Serializable {
     private String basicReleaseScript(String tag, String repo, String checkUrl, String apiUrl, String payloadJson, String userEnv, String passEnv) {
         String userRef = '$' + "{${userEnv}}"
         String passRef = '$' + "{${passEnv}}"
-        return '''#!/usr/bin/env bash
+        String script = '''#!/usr/bin/env bash
 set -euo pipefail
 set +x
 TAG=%s
@@ -225,7 +225,8 @@ if [ "$CHECK_STATUS" = "200" ]; then
 fi
 curl -sSf -X POST -H "${auth_header}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data %s %s > /dev/null
 echo "Published GitHub release ${TAG} to ${REPO}"
-''' .stripIndent().formatted(tag, repo, tokenRef, tokenRef, shellEscape(checkUrl), shellEscape(payloadJson), shellEscape(apiUrl))
+''' .stripIndent()
+        return String.format(script, tag, repo, tokenRef, tokenRef, shellEscape(checkUrl), shellEscape(payloadJson), shellEscape(apiUrl))
     }
 
     private void cleanWorkspaceForTag(Map autoTag) {
@@ -367,7 +368,7 @@ echo "Published GitHub release ${TAG} to ${REPO}"
 
         Closure restore = {
             if (hasRemote && originalUrl) {
-                steps.sh "git remote set-url ${shellEscape(remote)} ${shellEscape(originalUrl)}"
+                steps.sh(script: 'git remote set-url "$REMOTE" "$URL"', env: [REMOTE: remote, URL: originalUrl])
             }
         }
 
@@ -379,7 +380,7 @@ echo "Published GitHub release ${TAG} to ${REPO}"
                     if (hasRemote && originalUrl) {
                         String tokenVal = resolveEnvVar(tokenEnv)
                         String updated = injectCredentialsIntoUrl(originalUrl, tokenUser, tokenVal ?: '')
-                        steps.sh "git remote set-url ${shellEscape(remote)} ${shellEscape(updated)}"
+                        steps.sh(script: 'git remote set-url "$REMOTE" "$URL"', env: [REMOTE: remote, URL: updated])
                     }
                     try {
                         body()
@@ -396,7 +397,7 @@ echo "Published GitHub release ${TAG} to ${REPO}"
                         String userVal = resolveEnvVar(userEnv) ?: ''
                         String passVal = resolveEnvVar(passEnv) ?: ''
                         String updated = injectCredentialsIntoUrl(originalUrl, userVal, passVal)
-                        steps.sh "git remote set-url ${shellEscape(remote)} ${shellEscape(updated)}"
+                        steps.sh(script: 'git remote set-url "$REMOTE" "$URL"', env: [REMOTE: remote, URL: updated])
                     }
                     try {
                         body()
