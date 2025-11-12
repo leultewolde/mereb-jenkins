@@ -3,6 +3,9 @@ build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
+# Shared Jenkins library helpers live here; do not ignore.
+!src/org/mereb/ci/build/
+!src/org/mereb/ci/build/**
 .kotlin
 
 ### IntelliJ IDEA ###
