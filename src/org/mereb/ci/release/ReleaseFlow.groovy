@@ -101,17 +101,17 @@ class ReleaseFlow implements Serializable {
             }
 
             List<String> envVars = mapToEnvList(autoTag.env ?: [:])
-            Closure tagAction = {
+            def runTag = {
                 createAndPushTag(autoTag, state)
             }
-            Closure action = {
-                if (!envVars.isEmpty()) {
-                    steps.withEnv(envVars, tagAction)
+            def maybeEnv = {
+                if (envVars && !envVars.isEmpty()) {
+                    steps.withEnv(envVars) { runTag() }
                 } else {
-                    tagAction()
+                    runTag()
                 }
             }
-            withReleaseCredentials(autoTag, action)
+            withRepoCredential(autoTag, maybeEnv)
         }
     }
 
