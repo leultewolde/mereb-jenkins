@@ -186,7 +186,7 @@ class ReleaseFlow implements Serializable {
     private String basicReleaseScript(String tag, String repo, String checkUrl, String apiUrl, String payloadJson, String userEnv, String passEnv) {
         String userRef = '$' + "{${userEnv}}"
         String passRef = '$' + "{${passEnv}}"
-        String script = '''#!/usr/bin/env bash
+        String template = '''#!/usr/bin/env bash
 set -euo pipefail
 set +x
 TAG=%s
@@ -203,7 +203,8 @@ if [ "$CHECK_STATUS" = "200" ]; then
 fi
 curl -sSf -X POST -u "${auth}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data %s %s > /dev/null
 echo "Published GitHub release ${TAG} to ${REPO}"
-''' .stripIndent().formatted(tag, repo, userRef, passRef, userRef, passRef, shellEscape(checkUrl), shellEscape(payloadJson), shellEscape(apiUrl))
+'''.stripIndent()
+        return String.format(template, tag, repo, userRef, passRef, userRef, passRef, shellEscape(checkUrl), shellEscape(payloadJson), shellEscape(apiUrl))
     }
 
     private String tokenReleaseScript(String tag, String repo, String checkUrl, String apiUrl, String payloadJson, String tokenEnv) {

@@ -7,6 +7,7 @@ package org.mereb.ci
 class ReleaseCoordinator implements Serializable {
 
     private final Map autoTagCfg
+    private final List<String> deployOrder
     private final Closure autoTagAction
     private final Closure releaseStagesAction
     private final Closure deferredTerraformAction
@@ -18,15 +19,21 @@ class ReleaseCoordinator implements Serializable {
     private boolean releaseStagesRan = false
 
     ReleaseCoordinator(Map autoTagCfg,
+                       List<String> deployOrder,
                        Closure autoTagAction,
                        Closure releaseStagesAction,
                        Closure deferredTerraformAction) {
         this.autoTagCfg = autoTagCfg ?: [:]
+        this.deployOrder = (deployOrder ?: []).collect { it?.toString()?.trim() ?: '' }
         this.autoTagAction = autoTagAction
         this.releaseStagesAction = releaseStagesAction
         this.deferredTerraformAction = deferredTerraformAction
         this.autoTagEnabled = this.autoTagCfg.enabled as Boolean
-        this.afterEnvironment = (this.autoTagCfg.afterEnvironment ?: '').toString().trim().toLowerCase()
+        String rawAfter = (this.autoTagCfg.afterEnvironment ?: '').toString().trim().toLowerCase()
+        if (!rawAfter && this.deployOrder && !this.deployOrder.isEmpty()) {
+            rawAfter = this.deployOrder.last().toLowerCase()
+        }
+        this.afterEnvironment = rawAfter
     }
 
     /**

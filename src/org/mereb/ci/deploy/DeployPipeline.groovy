@@ -36,7 +36,11 @@ class DeployPipeline implements Serializable {
                 return
             }
 
-            if (envCfg.approval?.before as Boolean) {
+            boolean finalEnv = idx == order.size() - 1
+            Map approvalCfg = envCfg.approval ?: [:]
+            boolean approvalExplicit = approvalCfg.beforeExplicit as Boolean
+            boolean approvalBefore = approvalCfg.before as Boolean
+            if (approvalBefore || (finalEnv && approvalCfg && !approvalExplicit)) {
                 requestDeploymentApproval(envCfg)
             }
 

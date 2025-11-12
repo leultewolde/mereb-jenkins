@@ -666,8 +666,9 @@ class ConfigNormalizer implements Serializable {
         if (!raw) return [:]
         if (raw instanceof Map) {
             Map cfg = mapCopy(raw)
+            boolean beforeExplicit = cfg.containsKey('before')
             boolean before = false
-            if (cfg.containsKey('before')) {
+            if (beforeExplicit) {
                 before = cfg.get('before') as Boolean
             } else {
                 String timing = asString(cfg.get('timing') ?: cfg.get('when')).trim().toLowerCase()
@@ -677,7 +678,8 @@ class ConfigNormalizer implements Serializable {
                 message  : asString(cfg.get('message') ?: 'Approval required'),
                 submitter: cfg.get('submitter') ?: cfg.get('user') ?: cfg.get('users'),
                 ok       : asString(cfg.get('ok') ?: 'Approve'),
-                before   : before
+                before   : before,
+                beforeExplicit: beforeExplicit
             ]
         }
         String value = raw.toString()
@@ -689,7 +691,8 @@ class ConfigNormalizer implements Serializable {
             message  : "Approval required (${value})",
             submitter: submitter,
             ok       : 'Approve',
-            before   : false
+            before   : false,
+            beforeExplicit: false
         ]
     }
 

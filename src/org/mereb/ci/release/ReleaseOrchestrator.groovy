@@ -41,8 +41,10 @@ class ReleaseOrchestrator implements Serializable {
             }
         }
 
+        List<String> deployOrder = (cfg.deploy?.order instanceof List) ? (cfg.deploy.order as List).collect { it?.toString() } : []
         ReleaseCoordinator releaseCoordinator = new ReleaseCoordinator(
             cfg.release?.autoTag,
+            deployOrder,
             { handleRelease?.call(cfg.release, state) },
             { runReleaseStages?.call(cfg.releaseStages) },
             { runDeferredTerraform() }
