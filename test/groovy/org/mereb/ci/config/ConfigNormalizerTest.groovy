@@ -56,4 +56,31 @@ class ConfigNormalizerTest {
         assertEquals('HELM_REPO_USERNAME', repoCreds.usernameEnv)
         assertEquals('HELM_REPO_PASSWORD', repoCreds.passwordEnv)
     }
+
+    @Test
+    void "normalizes release autoTag credentialId into credential map"() {
+        Map raw = [
+            version: 1,
+            build  : [:],
+            image  : [repository: 'ghcr.io/example/app'],
+            deploy : [:],
+            terraform: [:],
+            release: [
+                autoTag: [
+                    enabled     : true,
+                    credentialId: 'github-credentials',
+                    usernameEnv : 'TAG_USER',
+                    passwordEnv : 'TAG_PASS'
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev'], '.ci/ci.yml')
+
+        Map autoTag = cfg.release.autoTag
+        assertTrue(autoTag.enabled)
+        assertEquals('github-credentials', autoTag.credential.id)
+        assertEquals('TAG_USER', autoTag.credential.usernameEnv)
+        assertEquals('TAG_PASS', autoTag.credential.passwordEnv)
+    }
 }
