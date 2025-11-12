@@ -48,7 +48,7 @@ def call(Map args = [:]) {
         baseEnv = (rawCfg.env ?: [:]).collect { k, v -> "${k}=${v}" }
     }
 
-    ConfigValidator.ValidationResult validation = ConfigValidator.validate(rawCfg)
+    def validation = ConfigValidator.validate(rawCfg)
     if (validation.hasWarnings()) {
         validation.warnings.each { warn ->
             echo "ciV1 config warning: ${warn}"
@@ -67,7 +67,7 @@ def call(Map args = [:]) {
             error "Workspace path is empty"
         }
 
-        final PipelineStateFactory.StateContext pipelineState = stateFactory.create(cfg, baseEnv, ws)
+        final def pipelineState = stateFactory.create(cfg, baseEnv, ws)
         final Map<String, String> state = pipelineState.state
         CredentialHelper credentialHelper = new CredentialHelper(this)
         VerbRunner verbRunner = new VerbRunner(this)
