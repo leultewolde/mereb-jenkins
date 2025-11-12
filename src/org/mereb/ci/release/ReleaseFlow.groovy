@@ -90,6 +90,8 @@ class ReleaseFlow implements Serializable {
                 return
             }
 
+            requestAutoTagApproval(autoTag.approval)
+
             cleanWorkspaceForTag(autoTag)
 
             String treeStatus = steps.sh(script: 'git status --porcelain', returnStdout: true).trim()
@@ -119,6 +121,20 @@ class ReleaseFlow implements Serializable {
                 }
             }
             withRepoCredential(autoTag, maybeEnv)
+        }
+    }
+
+    private void requestAutoTagApproval(Map approval) {
+        if (!approval || approval.isEmpty()) {
+            return
+        }
+        String message = approval.message ?: 'Create release tag?'
+        String ok = approval.ok ?: 'Approve'
+        Object submitter = approval.submitter
+        if (submitter) {
+            steps.input message: message, ok: ok, submitter: submitter.toString()
+        } else {
+            steps.input message: message, ok: ok
         }
     }
 

@@ -431,6 +431,7 @@ class ConfigNormalizer implements Serializable {
             clean          : data.containsKey('clean') ? (data.get('clean') as Boolean) : true,
             allowDirty     : data.containsKey('allowDirty') ? (data.get('allowDirty') as Boolean) : false,
             credential     : credential,
+            approval       : normalizeApproval(data.get('approval')),
             env            : toStringMap(data.get('env')),
             afterEnvironment: afterEnv
         ]
