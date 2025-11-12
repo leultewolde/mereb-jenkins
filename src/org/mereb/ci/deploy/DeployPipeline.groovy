@@ -48,7 +48,8 @@ class DeployPipeline implements Serializable {
 
                 Closure runDeploy = {
                     credentialHelper.withRepoCredentials(envCfg.repoCredentials) { Map repoCreds ->
-                        Map args = new LinkedHashMap(helmArgs)
+                        Map args = [:]
+                        args.putAll(helmArgs)
                         if (repoCreds?.username) {
                             args.repoUsername = repoCreds.username
                         }

@@ -75,10 +75,10 @@ class CredentialHelper implements Serializable {
         if (!body) {
             return
         }
-        if (body.maximumNumberOfParameters == 0) {
-            body.call()
-        } else {
+        try {
             body.call(arg ?: [:])
+        } catch (MissingMethodException | IllegalArgumentException ignored) {
+            body.call()
         }
     }
 }
