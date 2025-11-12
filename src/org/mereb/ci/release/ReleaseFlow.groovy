@@ -68,11 +68,19 @@ class ReleaseFlow implements Serializable {
     }
 
     void handleRelease(Map releaseCfg, Map state) {
-        Map autoTag = releaseCfg?.autoTag ?: [:]
+        Map autoTag = releaseCfg?.autoTag instanceof Map ? (releaseCfg.autoTag as Map) : [:]
+        String configuredId = ''
+        if (autoTag.get('credential') instanceof Map) {
+            Object idVal = (autoTag.get('credential') as Map).get('id')
+            configuredId = idVal?.toString()
+        }
+        if (!configuredId) {
+            configuredId = autoTag.get('credentialId')?.toString()
+        }
         if (!(autoTag.enabled as Boolean)) {
             return
         }
-        steps.echo "AutoTag credential id: ${(autoTag?.credential?.id ?: 'none')}"
+        steps.echo "AutoTag credential id: ${configuredId ?: 'none'}"
         if (!Helpers.matchCondition(autoTag.when as String, steps.env)) {
             steps.echo "Release auto-tag skipped by condition '${autoTag.when}'"
             return
@@ -329,7 +337,22 @@ echo "Published GitHub release ${TAG} to ${REPO}"
     }
 
     private void withRepoCredential(Map autoTag, Closure body) {
-        Map cred = autoTag?.credential ?: [:]
+        Map sourceMap = autoTag instanceof Map ? autoTag : [:]
+        Map cred = [:]
+        Object embedded = sourceMap.get('credential')
+        if (embedded instanceof Map) {
+            cred.putAll(embedded as Map)
+        } else {
+            Object idVal = sourceMap.get('credentialId')
+            if (idVal) {
+                cred.id = idVal
+                cred.type = sourceMap.get('credentialType') ?: 'usernamePassword'
+                cred.usernameEnv = sourceMap.get('usernameEnv')
+                cred.passwordEnv = sourceMap.get('passwordEnv')
+                cred.tokenEnv = sourceMap.get('tokenEnv')
+                cred.tokenUser = sourceMap.get('tokenUser')
+            }
+        }
         if (!cred.id) {
             body()
             return
