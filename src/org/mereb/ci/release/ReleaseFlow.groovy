@@ -165,9 +165,9 @@ class ReleaseFlow implements Serializable {
 
         Map credential = githubCfg.credential ?: [:]
         List<Map> bindings = []
-        String mode = (credential.type ?: 'token').toString()
+        String mode = (credential.type ?: 'token').toString().toLowerCase()
         String script
-        if ('basic'.equalsIgnoreCase(mode)) {
+        if (mode in ['basic', 'usernamepassword']) {
             String userEnv = credential.usernameEnv ?: 'GITHUB_USERNAME'
             String passEnv = credential.passwordEnv ?: 'GITHUB_PASSWORD'
             bindings << steps.usernamePassword(credentialsId: credential.id, usernameVariable: userEnv, passwordVariable: passEnv)
