@@ -67,8 +67,8 @@ class CredentialHelper implements Serializable {
             steps.usernamePassword(credentialsId: id, usernameVariable: usernameEnv, passwordVariable: passwordEnv)
         ]) {
             Map creds = [
-                username: steps.env[usernameEnv],
-                password: steps.env[passwordEnv]
+                username: steps.env?.get(usernameEnv),
+                password: steps.env?.get(passwordEnv)
             ]
             body.call(creds)
         }
