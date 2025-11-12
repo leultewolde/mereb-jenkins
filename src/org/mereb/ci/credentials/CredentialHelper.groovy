@@ -80,7 +80,11 @@ class CredentialHelper implements Serializable {
         if (!name?.trim()) {
             return ''
         }
-        String script = "printf '%s' \"\\$VAR\"".replace("VAR", name)
+        String safeName = name.replaceAll(/[^A-Za-z0-9_]/, '')
+        if (!safeName) {
+            return ''
+        }
+        String script = """printf '%s' "\$${safeName}""" 
         return steps.sh(script: script, returnStdout: true).trim()
     }
 }
