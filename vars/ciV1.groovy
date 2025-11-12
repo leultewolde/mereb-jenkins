@@ -122,14 +122,60 @@ def call(Map args = [:]) {
                 }
 
                 List<String> deferredTerraform = runTerraform(cfg.terraform, null, true)
-                handleRelease(cfg.release, state)
-                runReleaseStages(cfg.releaseStages)
-                if (env.RELEASE_TAG?.trim() && deferredTerraform && !deferredTerraform.isEmpty()) {
-                    env.TAG_NAME = env.RELEASE_TAG
-                    echo "Running deferred Terraform environments after creating tag ${env.RELEASE_TAG}"
-                    runTerraform(cfg.terraform, deferredTerraform, false)
+                boolean deferredTerraformRan = false
+                Closure runDeferredTerraform = {
+                    if (deferredTerraformRan) {
+                        return
+                    }
+                    if (env.RELEASE_TAG?.trim() && deferredTerraform && !deferredTerraform.isEmpty()) {
+                        env.TAG_NAME = env.RELEASE_TAG
+                        echo "Running deferred Terraform environments after creating tag ${env.RELEASE_TAG}"
+                        runTerraform(cfg.terraform, deferredTerraform, false)
+                        deferredTerraformRan = true
+                    }
                 }
-                deployEnvironments(cfg, state)
+
+                Map autoTagCfg = cfg.release?.autoTag ?: [:]
+                boolean autoTagEnabled = autoTagCfg.enabled as Boolean
+                String releaseAfterEnv = (autoTagCfg.afterEnvironment ?: '').toString().trim().toLowerCase()
+                boolean releaseFlowAttempted = false
+                boolean releaseStagesRan = false
+
+                Closure triggerAutoTag = {
+                    if (releaseFlowAttempted || !autoTagEnabled) {
+                        return
+                    }
+                    releaseFlowAttempted = true
+                    handleRelease(cfg.release, state)
+                    runDeferredTerraform()
+                    if ((env.RELEASE_TAG ?: '').trim()) {
+                        env.TAG_NAME = env.RELEASE_TAG
+                    }
+                    runReleaseStages(cfg.releaseStages)
+                    releaseStagesRan = true
+                }
+
+                if (autoTagEnabled && !releaseAfterEnv) {
+                    triggerAutoTag()
+                }
+
+                runDeferredTerraform()
+
+                Closure afterEnvCallback = null
+                if (autoTagEnabled && releaseAfterEnv) {
+                    afterEnvCallback = { String finishedEnv ->
+                        if (!releaseFlowAttempted && (finishedEnv ?: '').toString().trim().toLowerCase() == releaseAfterEnv) {
+                            triggerAutoTag()
+                        }
+                    }
+                }
+
+                deployEnvironments(cfg, state, afterEnvCallback)
+
+                runDeferredTerraform()
+                if (!releaseStagesRan) {
+                    runReleaseStages(cfg.releaseStages)
+                }
                 publishRelease(cfg.release, state)
             }
         } finally {
@@ -647,6 +693,7 @@ private void createAndPushTag(Map autoTag, Map state) {
     }
 
     env.RELEASE_TAG = nextTag
+    env.TAG_NAME = nextTag
     echo "Created release tag ${nextTag}"
 }
 
@@ -792,7 +839,7 @@ private boolean shouldDeferTerraform(String condition) {
 }
 
 // --------------------------- DEPLOY ------------------------------------------
-private void deployEnvironments(Map cfg, Map state) {
+private void deployEnvironments(Map cfg, Map state, Closure afterEnvCallback = null) {
     Map envs = cfg.deploy.environments ?: [:]
     List<String> order = cfg.deploy.order ?: []
     if (!envs || envs.isEmpty() || !order) {
@@ -809,6 +856,12 @@ private void deployEnvironments(Map cfg, Map state) {
         if (!Helpers.matchCondition(envCfg.when as String, env)) {
             echo "Skip deploy '${envCfg.displayName}' — condition '${envCfg.when}' not met"
             return
+        }
+
+        Map approvalCfg = envCfg.approval ?: [:]
+        boolean approvalBefore = approvalCfg.before as Boolean
+        if (approvalBefore) {
+            requestDeploymentApproval(envCfg)
         }
 
         List<String> valuesFiles = []
@@ -877,6 +930,10 @@ private void deployEnvironments(Map cfg, Map state) {
             }
         }
 
+        if (afterEnvCallback) {
+            afterEnvCallback.call(envName)
+        }
+
         if (idx < order.size() - 1 && !(envCfg.autoPromote as Boolean)) {
             requestPromotion(envCfg, envName, order[idx + 1])
         }
@@ -887,6 +944,17 @@ private void requestPromotion(Map envCfg, String current, String next) {
     Map approval = envCfg.approval ?: [:]
     String message = approval.message ?: "Promote ${current} deployment to ${next}?"
     String ok = approval.ok ?: 'Promote'
+    if (approval.submitter) {
+        input message: message, ok: ok, submitter: approval.submitter.toString()
+    } else {
+        input message: message, ok: ok
+    }
+}
+
+private void requestDeploymentApproval(Map envCfg) {
+    Map approval = envCfg.approval ?: [:]
+    String message = approval.message ?: "Deploy ${envCfg.displayName ?: envCfg.name}?"
+    String ok = approval.ok ?: 'Deploy'
     if (approval.submitter) {
         input message: message, ok: ok, submitter: approval.submitter.toString()
     } else {
@@ -1193,6 +1261,8 @@ private Map normalizeReleaseAutoTag(Object raw) {
     }
 
     Map credential = normalizeReleaseCredential(data)
+    String afterEnvRaw = data.afterEnvironment ?: data.afterEnv
+    String afterEnv = afterEnvRaw ? afterEnvRaw.toString().trim().toLowerCase() : ''
 
     return [
         enabled      : enabled,
@@ -1210,7 +1280,8 @@ private Map normalizeReleaseAutoTag(Object raw) {
         clean        : data.containsKey('clean') ? data.clean as Boolean : true,
         allowDirty   : data.containsKey('allowDirty') ? data.allowDirty as Boolean : false,
         credential   : credential,
-        env          : toStringMap(data.env)
+        env          : toStringMap(data.env),
+        afterEnvironment: afterEnv
     ]
 }
 
@@ -1639,10 +1710,18 @@ private Map normalizeApproval(Object raw) {
     if (!raw) return [:]
     if (raw instanceof Map) {
         Map cfg = raw as Map
+        boolean before = false
+        if (cfg.containsKey('before')) {
+            before = cfg.before as Boolean
+        } else {
+            String timing = (cfg.timing ?: cfg.when ?: '').toString().trim().toLowerCase()
+            before = timing in ['pre', 'before', 'deploy']
+        }
         return [
             message  : (cfg.message ?: 'Approval required').toString(),
             submitter: cfg.submitter ?: cfg.user ?: cfg.users,
-            ok       : (cfg.ok ?: 'Approve').toString()
+            ok       : (cfg.ok ?: 'Approve').toString(),
+            before   : before
         ]
     }
     String value = raw.toString()
@@ -1653,7 +1732,8 @@ private Map normalizeApproval(Object raw) {
     return [
         message  : "Approval required (${value})",
         submitter: submitter,
-        ok       : 'Approve'
+        ok       : 'Approve',
+        before   : false
     ]
 }
 
