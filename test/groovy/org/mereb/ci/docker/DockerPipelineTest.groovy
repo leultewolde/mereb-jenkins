@@ -39,4 +39,20 @@ class DockerPipelineTest {
 
         assertEquals('main-fedcba987654', DockerPipeline.computeImageTag(image, state))
     }
+
+    @Test
+    void "keeps repository when no push override is provided"() {
+        Map image = [repository: 'ghcr.io/mereb/api']
+        Map push = [:]
+
+        assertEquals('ghcr.io/mereb/api', DockerPipeline.resolvePushRepository(image, push))
+    }
+
+    @Test
+    void "retargets repository when push registry is set"() {
+        Map image = [repository: 'registry.leultewolde.com/mereb/svc-feed']
+        Map push = [registry: 'http://10.0.0.222:30400/']
+
+        assertEquals('10.0.0.222:30400/mereb/svc-feed', DockerPipeline.resolvePushRepository(image, push))
+    }
 }

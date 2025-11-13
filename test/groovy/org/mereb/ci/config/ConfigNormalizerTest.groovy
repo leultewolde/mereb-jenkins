@@ -83,4 +83,24 @@ class ConfigNormalizerTest {
         assertEquals('TAG_USER', autoTag.credential.usernameEnv)
         assertEquals('TAG_PASS', autoTag.credential.passwordEnv)
     }
+
+    @Test
+    void "strips protocols from registry inputs"() {
+        Map raw = [
+            version: 1,
+            build  : [:],
+            image  : [
+                repository: 'https://registry.leultewolde.com/apps/svc-feed',
+                registry  : 'https://registry.leultewolde.com/'
+            ],
+            deploy : [:],
+            terraform: [:],
+            release: [:]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev'], '.ci/ci.yml')
+
+        assertEquals('registry.leultewolde.com/apps/svc-feed', cfg.image.repository)
+        assertEquals('registry.leultewolde.com', cfg.image.registryHost)
+    }
 }

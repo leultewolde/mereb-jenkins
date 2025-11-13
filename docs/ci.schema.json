@@ -81,6 +81,7 @@
               "properties": {
                 "enabled": { "type": "boolean" },
                 "when": { "type": "string" },
+                "registry": { "type": "string" },
                 "credentials": {
                   "type": "object",
                   "properties": {

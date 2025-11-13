@@ -123,14 +123,23 @@ class DockerPipeline implements Serializable {
     private void dockerPush(Map cfg, Map state) {
         Map pushCfg = cfg.image.push
         dockerLoginIfNeeded(cfg.image, pushCfg)
-        steps.sh "docker push ${shellEscape(state.imageRef)}"
+        String pushRepository = resolvePushRepository(cfg.image, pushCfg)
+        if (!pushRepository?.trim()) {
+            throw new IllegalStateException('Unable to determine repository to push.')
+        }
+        String pushRef = "${pushRepository}:${state.imageTag}"
+        if (pushRef != state.imageRef) {
+            steps.sh "docker tag ${shellEscape(state.imageRef)} ${shellEscape(pushRef)}"
+        }
+        steps.sh "docker push ${shellEscape(pushRef)}"
+        String sourceForExtraTags = pushRef
         (pushCfg.extraTags ?: []).each { rawTag ->
             String rendered = renderTemplate(rawTag.toString(), templateContext(state))
             if (!rendered?.trim()) {
                 return
             }
-            String ref = "${cfg.image.repository}:${rendered}"
-            steps.sh "docker tag ${shellEscape(state.imageRef)} ${shellEscape(ref)}"
+            String ref = "${pushRepository}:${rendered}"
+            steps.sh "docker tag ${shellEscape(sourceForExtraTags)} ${shellEscape(ref)}"
             steps.sh "docker push ${shellEscape(ref)}"
         }
     }
@@ -214,12 +223,7 @@ class DockerPipeline implements Serializable {
 
         String usernameEnv = (credentials.usernameEnv ?: 'DOCKER_USERNAME').toString()
         String passwordEnv = (credentials.passwordEnv ?: 'DOCKER_PASSWORD').toString()
-        String registry = (pushCfg.registry ?: imageCfg.registryHost ?: '').toString().trim()
-        registry = registry.replaceFirst('^https?://', '')
-        if (!registry) {
-            registry = 'docker.io'
-        }
-
+        String registry = determineRegistryLoginHost(imageCfg, pushCfg)
         String hostSegment = registry ? " ${shellEscape(registry)}" : ''
         steps.echo "Logging in to Docker registry '${registry}' using credential '${credentialId}', username '${usernameEnv}'."
         steps.withCredentials([
@@ -271,6 +275,71 @@ class DockerPipeline implements Serializable {
         } else {
             steps.sh cmd.join(' ')
         }
+    }
+
+    private static String determineRegistryLoginHost(Map imageCfg, Map pushCfg) {
+        String override = sanitizeRegistryValue(pushCfg?.registry)
+        String fallback = sanitizeRegistryValue(imageCfg?.registryHost)
+        String candidate = override ?: fallback
+        if (!candidate) {
+            candidate = 'docker.io'
+        }
+        int slash = candidate.indexOf('/')
+        if (slash >= 0) {
+            candidate = candidate.substring(0, slash)
+        }
+        return candidate
+    }
+
+    static String resolvePushRepository(Map imageCfg, Map pushCfg) {
+        String repository = (imageCfg?.repository ?: '').toString()
+        String registryOverride = (pushCfg?.registry ?: '').toString()
+        return resolvePushRepository(repository, registryOverride)
+    }
+
+    static String resolvePushRepository(String repository, String registryOverride) {
+        String sanitizedRepo = sanitizeRegistryValue(repository)
+        if (!sanitizedRepo) {
+            return ''
+        }
+        String override = sanitizeRegistryValue(registryOverride)
+        if (!override) {
+            return sanitizedRepo
+        }
+        String repoPath = repositoryPath(sanitizedRepo)
+        if (!repoPath) {
+            return override
+        }
+        return "${override}/${repoPath}"
+    }
+
+    private static String sanitizeRegistryValue(Object raw) {
+        if (!raw) {
+            return ''
+        }
+        String value = raw.toString().trim()
+        if (!value) {
+            return ''
+        }
+        value = value.replaceFirst('^https?://', '')
+        return value.replaceAll('/+$', '')
+    }
+
+    private static String repositoryPath(String repository) {
+        if (!repository) {
+            return ''
+        }
+        String repo = repository.replaceFirst('^https?://', '')
+        int slash = repo.indexOf('/')
+        if (slash < 0) {
+            return repo
+        }
+        String firstSegment = repo.substring(0, slash)
+        boolean looksLikeRegistry = firstSegment.contains('.') || firstSegment.contains(':') || firstSegment == 'localhost'
+        if (looksLikeRegistry) {
+            return slash + 1 < repo.length() ? repo.substring(slash + 1) : ''
+        }
+        return repo
     }
 
     private boolean commandAvailable(String binary) {

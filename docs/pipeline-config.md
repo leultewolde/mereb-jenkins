@@ -58,6 +58,7 @@ image:
 ```
 
 If `repository` is omitted, the library derives it from `app.name`/`app.registry`.
+Set `push.registry` when the registry connection used for `docker login`/`docker push` must differ from the hostname baked into `repository` (for example, pushing via an internal IP that bypasses Cloudflare). The library strips `http(s)://` prefixes automatically so you can drop raw URLs into the config.
 
 ## Deploy Section
 ```yaml

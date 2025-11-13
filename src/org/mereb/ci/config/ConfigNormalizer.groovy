@@ -207,13 +207,13 @@ class ConfigNormalizer implements Serializable {
             ]
         }
 
-        String repository = asString(imageRaw.get('repository')).trim()
+        String repository = stripRegistryScheme(asString(imageRaw.get('repository')).trim())
         if (!repository) {
             String imageName = asString(imageRaw.get('name') ?: app.get('image') ?: app.get('name')).trim()
             if (!imageName) {
                 throw new IllegalArgumentException("image.repository or app.name must be defined in ${primaryConfig}")
             }
-            String registry = asString(imageRaw.get('registry') ?: app.get('registry')).trim()
+            String registry = stripRegistryScheme(asString(imageRaw.get('registry') ?: app.get('registry')).trim())
             if (registry) {
                 String cleaned = registry.replaceAll(/\/+$/, '')
                 repository = cleaned ? "${cleaned}/${imageName}" : imageName
@@ -222,7 +222,10 @@ class ConfigNormalizer implements Serializable {
             }
         }
 
-        String registryOverride = asString(imageRaw.get('registry')).trim()
+        String registryOverride = stripRegistryScheme(asString(imageRaw.get('registry')).trim())
+        if (registryOverride) {
+            registryOverride = registryOverride.replaceAll(/\/+$/, '')
+        }
         String derivedRegistryHost = deriveRegistryHost(repository)
         if (registryOverride) {
             derivedRegistryHost = registryOverride
@@ -260,6 +263,13 @@ class ConfigNormalizer implements Serializable {
         }
 
         return imageCfg
+    }
+
+    private static String stripRegistryScheme(String value) {
+        if (!value) {
+            return ''
+        }
+        return value.replaceFirst('^https?://', '')
     }
 
     private static String deriveRegistryHost(String repository) {
