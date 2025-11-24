@@ -62,7 +62,7 @@ class TerraformPipeline implements Serializable {
                 backend.putAll(globalBackend ?: [:])
                 backend.putAll(envCfg.backend ?: [:])
 
-                List<Map> bindings = credentialHelper.bindingsFor(envCfg)
+                List<Map> bindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
                 Closure execute = {
                     steps.dir(basePath) {
                         Map<String, String> combinedVars = [:]
@@ -105,7 +105,7 @@ class TerraformPipeline implements Serializable {
                     Map payload = [:]
                     payload.putAll(smoke)
                     payload.environment = envCfg.displayName
-                    List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg)
+                    List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
                     Closure smokeRun = {
                         steps.runSmoke(payload)
                     }

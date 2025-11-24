@@ -11,7 +11,7 @@ class CredentialHelper implements Serializable {
         this.steps = steps
     }
 
-    List<Map> bindingsFor(Map cfg) {
+    List<Map> bindingsFor(Map cfg, String vaultAddr = null) {
         List<Map> bindings = []
         if (cfg?.kubeconfigCredential) {
             bindings << [$class: 'FileBinding', credentialsId: cfg.kubeconfigCredential, variable: (cfg.kubeconfigEnv ?: 'KUBECONFIG')]
@@ -29,7 +29,7 @@ class CredentialHelper implements Serializable {
             switch (lowerType) {
                 case 'vault':
                 case 'vaulttoken':
-                    bindings << vaultTokenBinding(id, envVar)
+                    bindings << vaultTokenBinding(id, envVar, vaultAddr)
                     break
                 case 'file':
                     bindings << [$class: 'FileBinding', credentialsId: id, variable: envVar ?: 'SECRET_FILE']
@@ -40,7 +40,7 @@ class CredentialHelper implements Serializable {
                     break
                 default:
                     if (shouldUseVaultTokenFallback(lowerType, envVar, id)) {
-                        bindings << vaultTokenBinding(id, envVar)
+                        bindings << vaultTokenBinding(id, envVar, vaultAddr)
                     } else {
                         bindings << [$class: 'StringBinding', credentialsId: id, variable: envVar ?: 'SECRET']
                     }
@@ -100,9 +100,13 @@ class CredentialHelper implements Serializable {
         return steps.sh(script: script, returnStdout: true).trim()
     }
 
-    private static Map vaultTokenBinding(String id, String envVar) {
+    private static Map vaultTokenBinding(String id, String envVar, String vaultAddr) {
         String variable = envVar ?: 'VAULT_TOKEN'
-        return [$class: 'VaultTokenCredentialBinding', credentialsId: id, tokenVariable: variable]
+        Map binding = [$class: 'VaultTokenCredentialBinding', credentialsId: id, tokenVariable: variable]
+        if (vaultAddr?.trim()) {
+            binding.vaultAddr = vaultAddr.trim()
+        }
+        return binding
     }
 
     private static boolean shouldUseVaultTokenFallback(String lowerType, String envVar, String id) {

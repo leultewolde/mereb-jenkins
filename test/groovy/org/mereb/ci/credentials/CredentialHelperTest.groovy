@@ -9,24 +9,26 @@ class CredentialHelperTest {
     void "uses vault token binding when type is vaultToken"() {
         CredentialHelper helper = new CredentialHelper(null)
 
-        List<Map> bindings = helper.bindingsFor([credentials: [[type: 'vaultToken', id: 'vault-cred', env: 'VAULT_TOKEN']]])
+        List<Map> bindings = helper.bindingsFor([credentials: [[type: 'vaultToken', id: 'vault-cred', env: 'VAULT_TOKEN']]], 'https://vault.leultewolde.com')
 
         assertEquals(1, bindings.size())
         assertEquals('VaultTokenCredentialBinding', bindings[0].$class)
         assertEquals('VAULT_TOKEN', bindings[0].tokenVariable)
         assertEquals('vault-cred', bindings[0].credentialsId)
+        assertEquals('https://vault.leultewolde.com', bindings[0].vaultAddr)
     }
 
     @Test
     void "falls back to vault token binding when env is VAULT_TOKEN even if type is string"() {
         CredentialHelper helper = new CredentialHelper(null)
 
-        List<Map> bindings = helper.bindingsFor([credentials: [[type: 'string', id: 'vault-credentials', env: 'VAULT_TOKEN']]])
+        List<Map> bindings = helper.bindingsFor([credentials: [[type: 'string', id: 'vault-credentials', env: 'VAULT_TOKEN']]], 'https://vault.leultewolde.com')
 
         assertEquals(1, bindings.size())
         assertEquals('VaultTokenCredentialBinding', bindings[0].$class)
         assertEquals('VAULT_TOKEN', bindings[0].tokenVariable)
         assertEquals('vault-credentials', bindings[0].credentialsId)
+        assertEquals('https://vault.leultewolde.com', bindings[0].vaultAddr)
     }
 
     @Test

@@ -46,7 +46,8 @@ class DeployPipeline implements Serializable {
                 requestDeploymentApproval(envCfg)
             }
 
-            List<Map> deployBindings = credentialHelper.bindingsFor(envCfg)
+            String vaultAddress = resolveVaultAddress(envCfg)
+            List<Map> deployBindings = credentialHelper.bindingsFor(envCfg, vaultAddress)
             List<String> valuesFiles = determineValuesFiles(envName, envCfg)
             List<String> renderedTemplates = []
             Closure renderTemplates = {
@@ -55,7 +56,6 @@ class DeployPipeline implements Serializable {
             Closure renderWithCredentials = {
                 credentialHelper.withOptionalCredentials(deployBindings, renderTemplates)
             }
-            String vaultAddress = resolveVaultAddress(envCfg)
             if (vaultAddress) {
                 steps.withEnv(["VAULT_ADDR=${vaultAddress}"], renderWithCredentials)
             } else {
@@ -149,7 +149,7 @@ class DeployPipeline implements Serializable {
             Map payload = [:]
             payload.putAll(smoke)
             payload.environment = envCfg.displayName
-            List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg)
+            List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg, resolveVaultAddress(envCfg))
             Closure run = {
                 steps.runSmoke(payload)
             }
