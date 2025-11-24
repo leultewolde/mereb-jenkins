@@ -23,7 +23,8 @@ class DeployPipelineTest {
                 when           : '',
                 valuesTemplates: [[
                         template: 'templates/values-secret.yaml.tpl',
-                        output  : '.ci/.rendered/values-dev.secret.yaml'
+                        output  : '.ci/.rendered/values-dev.secret.yaml',
+                        vault   : [url: 'vault.dev']
                 ]],
                 credentials    : [[type: 'string', id: 'vault-credentials', env: 'VAULT_TOKEN']]
         ]
@@ -38,6 +39,7 @@ class DeployPipelineTest {
         assertTrue(steps.withCredentialsBindings.any { bindings ->
             bindings.any { (it.variable ?: it.tokenVariable) == 'VAULT_TOKEN' && it.credentialsId == 'vault-credentials' }
         }, 'Expected vault credentials to be bound during template rendering')
+        assertTrue(steps.withEnvCalls.any { it.VAULT_ADDR == 'https://vault.dev' }, 'Expected VAULT_ADDR to be set during render')
     }
 
     private static class StubRenderer extends ValuesTemplateRenderer {
@@ -68,6 +70,7 @@ class DeployPipelineTest {
         final Map<String, String> writes = [:]
         final List<List<Map>> withCredentialsBindings = []
         final List<String> shScripts = []
+        final List<Map<String, String>> withEnvCalls = []
 
         void echo(String msg) {}
 
@@ -98,6 +101,31 @@ class DeployPipelineTest {
                 }
             }
             body?.call()
+        }
+
+        void withEnv(List<String> vars, Closure body) {
+            Map<String, String> snapshot = [:]
+            vars.each { String entry ->
+                if (!entry) return
+                def parts = entry.split('=', 2)
+                if (parts.length == 2) {
+                    String key = parts[0]
+                    snapshot[key] = env[key]
+                    env[key] = parts[1]
+                }
+            }
+            withEnvCalls << vars.collectEntries { it.contains('=') ? [(it.split('=',2)[0]): it.split('=',2)[1]] : [:] }
+            try {
+                body?.call()
+            } finally {
+                snapshot.each { k, v ->
+                    if (v == null) {
+                        env.remove(k)
+                    } else {
+                        env[k] = v
+                    }
+                }
+            }
         }
 
         String sh(Map args) {

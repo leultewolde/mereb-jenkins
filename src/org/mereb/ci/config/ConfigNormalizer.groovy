@@ -567,6 +567,7 @@ class ConfigNormalizer implements Serializable {
         Map appCfg = mapCopy(appCfgRaw)
         Map smoke = normalizeSmoke(envCfg.get('smoke'))
         Map approval = normalizeApproval(envCfg.get('approve') ?: envCfg.get('approval'))
+        Map vaultCfg = mapCopy(envCfg.get('vault'))
 
         String display = asString(envCfg.get('displayName'))
         if (!display) {
@@ -632,7 +633,8 @@ class ConfigNormalizer implements Serializable {
             atomic         : envCfg.get('atomic') == null ? true : (envCfg.get('atomic') as Boolean),
             timeout        : asString(envCfg.get('timeout') ?: appCfg.get('timeout') ?: '10m'),
             valuesTemplates: valuesTemplates,
-            credentials    : envCfg.get('credentials') instanceof List ? envCfg.get('credentials') : []
+            credentials    : envCfg.get('credentials') instanceof List ? envCfg.get('credentials') : [],
+            vault          : vaultCfg
         ]
 
         return result

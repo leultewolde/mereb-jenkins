@@ -49,8 +49,17 @@ class DeployPipeline implements Serializable {
             List<Map> deployBindings = credentialHelper.bindingsFor(envCfg)
             List<String> valuesFiles = determineValuesFiles(envName, envCfg)
             List<String> renderedTemplates = []
-            credentialHelper.withOptionalCredentials(deployBindings) {
+            Closure renderTemplates = {
                 renderedTemplates = templateRenderer.render(envName, envCfg)
+            }
+            Closure renderWithCredentials = {
+                credentialHelper.withOptionalCredentials(deployBindings, renderTemplates)
+            }
+            String vaultAddress = resolveVaultAddress(envCfg)
+            if (vaultAddress) {
+                steps.withEnv(["VAULT_ADDR=${vaultAddress}"], renderWithCredentials)
+            } else {
+                renderWithCredentials()
             }
             valuesFiles.addAll(renderedTemplates)
 
@@ -168,5 +177,48 @@ class DeployPipeline implements Serializable {
         } else {
             steps.input message: message, ok: ok
         }
+    }
+
+    private String resolveVaultAddress(Map envCfg) {
+        String envAddr = (steps?.env?.VAULT_ADDR ?: '')?.toString()?.trim()
+        if (envAddr) {
+            String normalized = normalizeVaultAddress(envAddr)
+            if (normalized) {
+                return normalized
+            }
+        }
+        if (envCfg?.vault instanceof Map) {
+            String url = (envCfg.vault.url ?: envCfg.vault.baseUrl ?: '').toString().trim()
+            String normalized = normalizeVaultAddress(url)
+            if (normalized) {
+                return normalized
+            }
+        }
+        if (envCfg?.valuesTemplates instanceof List) {
+            for (Object entry : envCfg.valuesTemplates) {
+                if (!(entry instanceof Map)) {
+                    continue
+                }
+                Map templateCfg = entry as Map
+                Map vault = templateCfg.vault instanceof Map ? templateCfg.vault as Map : [:]
+                String url = (vault.url ?: vault.baseUrl ?: '').toString().trim()
+                String normalized = normalizeVaultAddress(url)
+                if (normalized) {
+                    return normalized
+                }
+            }
+        }
+        return null
+    }
+
+    private static String normalizeVaultAddress(String raw) {
+        if (!raw?.trim()) {
+            return null
+        }
+        String addr = raw.trim()
+        if (!addr.contains('://')) {
+            addr = "https://${addr}"
+        }
+        return addr.replaceAll(/\/+$/, '')
     }
 }
