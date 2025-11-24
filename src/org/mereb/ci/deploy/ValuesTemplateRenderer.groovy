@@ -129,7 +129,7 @@ class ValuesTemplateRenderer implements Serializable {
         String escapedPath = secretPath.replace("'", "'\"'\"'")
         String tokenRef = "\$${safeTokenEnv}"
         String script = """#!/bin/sh
-set -eo pipefail
+set -e
 resp_file=\$(mktemp)
 status=\$(curl -s -w "%{http_code}" -H "X-Vault-Token: ${tokenRef}" -o "\${resp_file}" '${escapedRoot}/v1/${escapedPath}')
 body=\$(cat "\${resp_file}")
