@@ -12,10 +12,10 @@ class DeployPipeline implements Serializable {
     private final CredentialHelper credentialHelper
     private final ValuesTemplateRenderer templateRenderer
 
-    DeployPipeline(def steps, CredentialHelper credentialHelper) {
+    DeployPipeline(def steps, CredentialHelper credentialHelper, ValuesTemplateRenderer templateRenderer = null) {
         this.steps = steps
         this.credentialHelper = credentialHelper
-        this.templateRenderer = new ValuesTemplateRenderer(steps)
+        this.templateRenderer = templateRenderer ?: new ValuesTemplateRenderer(steps)
     }
 
     void run(Map cfg, Map state, Closure afterEnvCallback = null) {
@@ -46,13 +46,16 @@ class DeployPipeline implements Serializable {
                 requestDeploymentApproval(envCfg)
             }
 
+            List<Map> deployBindings = credentialHelper.bindingsFor(envCfg)
             List<String> valuesFiles = determineValuesFiles(envName, envCfg)
-            valuesFiles.addAll(templateRenderer.render(envName, envCfg))
+            List<String> renderedTemplates = []
+            credentialHelper.withOptionalCredentials(deployBindings) {
+                renderedTemplates = templateRenderer.render(envName, envCfg)
+            }
+            valuesFiles.addAll(renderedTemplates)
 
             steps.stage("Deploy ${envCfg.displayName}") {
                 Map helmArgs = buildHelmArgs(envCfg, state, cfg.image, valuesFiles)
-                List<Map> deployBindings = credentialHelper.bindingsFor(envCfg)
-
                 Closure runDeploy = {
                     credentialHelper.withRepoCredentials(envCfg.repoCredentials) { Map repoCreds ->
                         Map args = [:]
