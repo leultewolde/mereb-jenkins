@@ -32,12 +32,12 @@ class ValuesTemplateRendererTest {
     void "uses env-level vault defaults when template vars specify vault path"() {
         FakeSteps steps = new FakeSteps(
                 existing: ['templates/values-secret.yaml.tpl'] as Set,
-                files: ['templates/values-secret.yaml.tpl': 'db: {{ DATABASE_URL }}']
+                files: ['templates/values-secret.yaml.tpl': 'db: {{ DATABASE_URL }}'],
+                httpResponses: [
+                        'https://vault.leultewolde.com/v1/kv/data/apps/dev': [status: 200, content: '{"data":{"data":{"DATABASE_URL":"jdbc:postgresql://example"}}}']
+                ]
         )
         ValuesTemplateRenderer renderer = new ValuesTemplateRenderer(steps)
-        renderer.metaClass.fetchVaultValue = { String placeholder, Map cfg ->
-            return "${cfg.url}:${cfg.path}:${cfg.field}"
-        }
 
         List<String> outputs = renderer.render('dev', [
                 vault: [url: 'https://vault.leultewolde.com', tokenEnv: 'VAULT_TOKEN'],
@@ -51,7 +51,7 @@ class ValuesTemplateRendererTest {
         ])
 
         assertEquals(['out/secret.yaml'], outputs)
-        assertEquals('db: https://vault.leultewolde.com:kv/data/apps/dev:DATABASE_URL', steps.written['out/secret.yaml'])
+        assertEquals('db: jdbc:postgresql://example', steps.written['out/secret.yaml'])
     }
 
     private static class FakeSteps {
@@ -59,10 +59,13 @@ class ValuesTemplateRendererTest {
         final Map<String, String> files
         final Map<String, String> written = [:]
         final List<String> shScripts = []
+        final Map<String, Map> httpResponses
+        final List<Map> httpRequests = []
 
         FakeSteps(Map args = [:]) {
             this.existing = (args.existing ?: [] as Set) as Set
             this.files = args.files ?: [:]
+            this.httpResponses = args.httpResponses ?: [:]
         }
 
         boolean fileExists(String path) {
@@ -79,6 +82,13 @@ class ValuesTemplateRendererTest {
 
         void error(String msg) {
             throw new RuntimeException(msg)
+        }
+
+        Map httpRequest(Map args) {
+            httpRequests << args
+            String url = args.url ?: ''
+            Map resp = httpResponses[url] ?: [:]
+            return [status: resp.status ?: resp.statusCode ?: 200, content: resp.content ?: '']
         }
 
         String sh(Map args) {

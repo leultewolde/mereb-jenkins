@@ -23,7 +23,10 @@ class SandboxGuardTest {
                             String content = Files.readString(file)
                             [
                                     ~/new\s+File\s*\(/,
-                                    ~/java\.io\.File/
+                                    ~/java\.io\.File/,
+                                    ~/new\s+URL\s*\(/,
+                                    ~/HttpURLConnection/,
+                                    ~/openConnection\s*\(/
                             ].each { pattern ->
                                 def matcher = content =~ pattern
                                 if (matcher.find()) {

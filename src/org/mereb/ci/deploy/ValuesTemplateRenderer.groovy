@@ -120,19 +120,24 @@ class ValuesTemplateRenderer implements Serializable {
     private Map readVaultSecret(String baseUrl, String path, String token, String engine) {
         String root = baseUrl.replaceAll(/\/+$/, '')
         String secretPath = path.replaceAll(/^\/+/, '')
-        URL target = new URL("${root}/v1/${secretPath}")
-        HttpURLConnection conn = (HttpURLConnection) target.openConnection()
-        conn.setRequestMethod('GET')
-        conn.setRequestProperty('X-Vault-Token', token)
-        conn.setConnectTimeout(10000)
-        conn.setReadTimeout(10000)
-        conn.connect()
-        int status = conn.responseCode
-        String payload = ''
-        if (status >= 200 && status < 300) {
-            payload = conn.inputStream?.getText('UTF-8') ?: ''
-        } else {
-            payload = conn.errorStream?.getText('UTF-8') ?: ''
+        String url = "${root}/v1/${secretPath}"
+        Map request = [
+            httpMode             : 'GET',
+            url                  : url,
+            customHeaders        : [[name: 'X-Vault-Token', value: token, maskValue: true]],
+            validResponseCodes   : '100:599',
+            consoleLogResponseBody: false,
+            quiet                : true
+        ]
+        def resp
+        try {
+            resp = steps.httpRequest(request)
+        } catch (MissingMethodException ignore) {
+            steps.error("valuesTemplates: httpRequest step is required to call Vault from sandboxed pipelines")
+        }
+        int status = (resp?.status ?: resp?.statusCode ?: 0) as int
+        String payload = (resp?.content ?: '').toString()
+        if (status < 200 || status >= 300) {
             steps.error("Vault request to '${secretPath}' failed (HTTP ${status}): ${payload}")
         }
         def parsed = payload ? new JsonSlurper().parseText(payload) : [:]
