@@ -637,6 +637,12 @@ class ConfigNormalizer implements Serializable {
             vault          : vaultCfg
         ]
 
+        if (envCfg.containsKey('restartWorkloads')) {
+            result.restartWorkloads = envCfg.get('restartWorkloads') as Boolean
+        } else {
+            result.restartWorkloads = true
+        }
+
         return result
     }
 

@@ -40,6 +40,8 @@ class DeployPipelineTest {
             bindings.any { (it.variable ?: it.tokenVariable) == 'VAULT_TOKEN' && it.credentialsId == 'vault-credentials' }
         }, 'Expected vault credentials to be bound during template rendering')
         assertTrue(steps.withEnvCalls.any { it.VAULT_ADDR == 'https://vault.dev' }, 'Expected VAULT_ADDR to be set during render')
+        assertTrue(steps.shScripts.any { it.contains('kubectl -n apps-dev rollout restart deployment -l app.kubernetes.io/instance=svc-feed-dev') })
+        assertTrue(steps.shScripts.any { it.contains('kubectl -n apps-dev rollout restart statefulset -l app.kubernetes.io/instance=svc-feed-dev') })
     }
 
     private static class StubRenderer extends ValuesTemplateRenderer {
@@ -128,16 +130,20 @@ class DeployPipelineTest {
             }
         }
 
-        String sh(Map args) {
-            if (args.returnStdout) {
-                def matcher = args.script =~ /printenv\s+([A-Za-z0-9_]+)/
-                if (matcher.find()) {
-                    String key = matcher[0][1]
-                    return (env[key] ?: '') + '\n'
+        String sh(def args) {
+            if (args instanceof Map) {
+                if (args.returnStdout) {
+                    def matcher = args.script =~ /printenv\s+([A-Za-z0-9_]+)/
+                    if (matcher.find()) {
+                        String key = matcher[0][1]
+                        return (env[key] ?: '') + '\n'
+                    }
+                    return ''
                 }
+                shScripts << (args.script ?: '').toString()
                 return ''
             }
-            shScripts << (args.script ?: '')
+            shScripts << args.toString()
             return ''
         }
 

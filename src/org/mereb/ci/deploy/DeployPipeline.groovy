@@ -76,6 +76,7 @@ class DeployPipeline implements Serializable {
                             args.repoPassword = repoCreds.password
                         }
                         steps.helmDeploy(args)
+                        restartWorkloads(envCfg)
                     }
                 }
 
@@ -176,6 +177,21 @@ class DeployPipeline implements Serializable {
             steps.input message: message, ok: ok, submitter: approval.submitter.toString()
         } else {
             steps.input message: message, ok: ok
+        }
+    }
+
+    private void restartWorkloads(Map envCfg) {
+        if (envCfg.containsKey('restartWorkloads') && !(envCfg.restartWorkloads as Boolean)) {
+            return
+        }
+        String namespace = envCfg.namespace ?: 'default'
+        String release = envCfg.release ?: envCfg.name
+        List<String> commands = [
+            "kubectl -n ${namespace} rollout restart deployment -l app.kubernetes.io/instance=${release}",
+            "kubectl -n ${namespace} rollout restart statefulset -l app.kubernetes.io/instance=${release}"
+        ]
+        commands.each { cmd ->
+            steps.sh(cmd)
         }
     }
 
