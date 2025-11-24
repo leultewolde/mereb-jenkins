@@ -28,6 +28,32 @@ class ValuesTemplateRendererTest {
         assertTrue(renderer.render('dev', [:]).isEmpty())
     }
 
+    @Test
+    void "uses env-level vault defaults when template vars specify vault path"() {
+        FakeSteps steps = new FakeSteps(
+                existing: ['templates/values-secret.yaml.tpl'] as Set,
+                files: ['templates/values-secret.yaml.tpl': 'db: {{ DATABASE_URL }}']
+        )
+        ValuesTemplateRenderer renderer = new ValuesTemplateRenderer(steps)
+        renderer.metaClass.fetchVaultValue = { String placeholder, Map cfg ->
+            return "${cfg.url}:${cfg.path}:${cfg.field}"
+        }
+
+        List<String> outputs = renderer.render('dev', [
+                vault: [url: 'https://vault.leultewolde.com', tokenEnv: 'VAULT_TOKEN'],
+                valuesTemplates: [[
+                        template: 'templates/values-secret.yaml.tpl',
+                        output  : 'out/secret.yaml',
+                        vars    : [
+                                DATABASE_URL: [vaultPath: 'kv/data/apps/dev', vaultField: 'DATABASE_URL']
+                        ]
+                ]]
+        ])
+
+        assertEquals(['out/secret.yaml'], outputs)
+        assertEquals('db: https://vault.leultewolde.com:kv/data/apps/dev:DATABASE_URL', steps.written['out/secret.yaml'])
+    }
+
     private static class FakeSteps {
         final Set<String> existing
         final Map<String, String> files
@@ -57,7 +83,7 @@ class ValuesTemplateRendererTest {
 
         String sh(Map args) {
             if (args.returnStdout) {
-                return ''
+                return 'token\n'
             }
             shScripts << (args.script ?: '').toString()
             return ''

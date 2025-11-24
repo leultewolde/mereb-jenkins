@@ -21,9 +21,16 @@ class ValuesTemplateRenderer implements Serializable {
         if (!templates || templates.isEmpty()) {
             return []
         }
+        Map envVaultDefaults = envCfg?.vault instanceof Map ? envCfg.vault as Map : [:]
         List<String> rendered = []
         templates.eachWithIndex { Object entry, int idx ->
             Map templateCfg = entry instanceof Map ? entry as Map : [:]
+            Map mergedVault = [:]
+            mergedVault.putAll(envVaultDefaults ?: [:])
+            if (templateCfg.vault instanceof Map) {
+                mergedVault.putAll(templateCfg.vault as Map)
+            }
+            templateCfg.vault = mergedVault
             String templatePath = (templateCfg.template ?: templateCfg.path ?: '').toString().trim()
             if (!templatePath) {
                 steps.error("deploy.${envName}: valuesTemplates[${idx}] is missing 'template'")
@@ -89,7 +96,7 @@ class ValuesTemplateRenderer implements Serializable {
         return rawValue?.toString() ?: ''
     }
 
-    private String fetchVaultValue(String placeholder, Map cfg) {
+    protected String fetchVaultValue(String placeholder, Map cfg) {
         String url = (cfg.url ?: cfg.baseUrl ?: '').toString().trim()
         String path = (cfg.path ?: cfg.secretPath ?: '').toString().trim()
         String field = (cfg.field ?: cfg.secretField ?: placeholder)?.toString()?.trim()
