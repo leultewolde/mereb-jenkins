@@ -10,10 +10,12 @@ class DeployPipeline implements Serializable {
 
     private final def steps
     private final CredentialHelper credentialHelper
+    private final ValuesTemplateRenderer templateRenderer
 
     DeployPipeline(def steps, CredentialHelper credentialHelper) {
         this.steps = steps
         this.credentialHelper = credentialHelper
+        this.templateRenderer = new ValuesTemplateRenderer(steps)
     }
 
     void run(Map cfg, Map state, Closure afterEnvCallback = null) {
@@ -45,6 +47,7 @@ class DeployPipeline implements Serializable {
             }
 
             List<String> valuesFiles = determineValuesFiles(envName, envCfg)
+            valuesFiles.addAll(templateRenderer.render(envName, envCfg))
 
             steps.stage("Deploy ${envCfg.displayName}") {
                 Map helmArgs = buildHelmArgs(envCfg, state, cfg.image, valuesFiles)
