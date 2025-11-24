@@ -61,11 +61,13 @@ class ValuesTemplateRendererTest {
         final List<String> shScripts = []
         final Map<String, Map> httpResponses
         final List<Map> httpRequests = []
+        final Map env
 
         FakeSteps(Map args = [:]) {
             this.existing = (args.existing ?: [] as Set) as Set
             this.files = args.files ?: [:]
             this.httpResponses = args.httpResponses ?: [:]
+            this.env = args.env ?: [VAULT_TOKEN: 'token']
         }
 
         boolean fileExists(String path) {
@@ -92,10 +94,23 @@ class ValuesTemplateRendererTest {
         }
 
         String sh(Map args) {
+            String script = (args.script ?: '').toString()
             if (args.returnStdout) {
-                return 'token\n'
+                if (script.contains('printenv')) {
+                    def matcher = script =~ /printenv\s+([A-Za-z0-9_]+)/
+                    String key = matcher.find() ? matcher[0][1] : env.keySet().find()
+                    return ((env[key] ?: '') + '\n')
+                }
+                if (script.contains('---VAULT-BODY-START---')) {
+                    Map.Entry entry = httpResponses.entrySet().find { e -> script.contains(e.key) }
+                    Map resp = entry?.value ?: [:]
+                    int status = (resp.status ?: resp.statusCode ?: 200) as int
+                    String content = resp.content ?: ''
+                    return "${status}\n---VAULT-BODY-START---\n${content}\n"
+                }
+                return ''
             }
-            shScripts << (args.script ?: '').toString()
+            shScripts << script
             return ''
         }
     }

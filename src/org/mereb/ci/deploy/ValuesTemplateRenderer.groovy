@@ -109,7 +109,7 @@ class ValuesTemplateRenderer implements Serializable {
         if (!token) {
             steps.error("valuesTemplates: environment variable '${tokenEnv}' is empty while resolving '${placeholder}'")
         }
-        Map secretData = readVaultSecret(url, path, token, engine == 'kv1' ? 'kv1' : 'kv2')
+        Map secretData = readVaultSecret(url, path, tokenEnv, engine == 'kv1' ? 'kv1' : 'kv2')
         Object resolved = extractField(secretData, field)
         if (resolved == null) {
             steps.error("valuesTemplates: field '${field}' not found in Vault secret '${path}'")
@@ -117,26 +117,38 @@ class ValuesTemplateRenderer implements Serializable {
         return resolved.toString()
     }
 
-    private Map readVaultSecret(String baseUrl, String path, String token, String engine) {
+    private Map readVaultSecret(String baseUrl, String path, String tokenEnv, String engine) {
+        String safeTokenEnv = (tokenEnv ?: '').replaceAll(/[^A-Za-z0-9_]/, '')
+        if (!safeTokenEnv) {
+            steps.error("valuesTemplates: invalid Vault token env name '${tokenEnv}'")
+        }
         String root = baseUrl.replaceAll(/\/+$/, '')
         String secretPath = path.replaceAll(/^\/+/, '')
-        String url = "${root}/v1/${secretPath}"
-        Map request = [
-            httpMode             : 'GET',
-            url                  : url,
-            customHeaders        : [[name: 'X-Vault-Token', value: token, maskValue: true]],
-            validResponseCodes   : '100:599',
-            consoleLogResponseBody: false,
-            quiet                : true
-        ]
-        def resp
-        try {
-            resp = steps.httpRequest(request)
-        } catch (MissingMethodException ignore) {
-            steps.error("valuesTemplates: httpRequest step is required to call Vault from sandboxed pipelines")
+        String marker = '---VAULT-BODY-START---'
+        String escapedRoot = root.replace("'", "'\"'\"'")
+        String escapedPath = secretPath.replace("'", "'\"'\"'")
+        String tokenRef = "\$${safeTokenEnv}"
+        String script = """#!/bin/sh
+set -eo pipefail
+resp_file=\$(mktemp)
+status=\$(curl -s -w "%{http_code}" -H "X-Vault-Token: ${tokenRef}" -o "\${resp_file}" '${escapedRoot}/v1/${escapedPath}')
+body=\$(cat "\${resp_file}")
+rm -f "\${resp_file}"
+printf "%s\\n${marker}\\n%s" "\${status}" "\${body}"
+"""
+        String output = steps.sh(script: script, returnStdout: true).trim()
+        int sepIdx = output.indexOf(marker)
+        if (sepIdx < 0) {
+            steps.error("Vault request to '${secretPath}' returned unexpected response")
         }
-        int status = (resp?.status ?: resp?.statusCode ?: 0) as int
-        String payload = (resp?.content ?: '').toString()
+        String statusLine = output.substring(0, sepIdx).trim()
+        String payload = output.substring(sepIdx + marker.length()).trim()
+        int status = 0
+        try {
+            status = Integer.parseInt(statusLine)
+        } catch (Exception ignored) {
+            steps.error("Vault request to '${secretPath}' returned invalid status '${statusLine}'")
+        }
         if (status < 200 || status >= 300) {
             steps.error("Vault request to '${secretPath}' failed (HTTP ${status}): ${payload}")
         }
