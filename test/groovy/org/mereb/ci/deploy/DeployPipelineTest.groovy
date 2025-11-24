@@ -36,7 +36,7 @@ class DeployPipelineTest {
         assertEquals(1, renderer.renderCalls)
         assertEquals('.ci/.rendered/values-dev.secret.yaml', renderer.lastOutput)
         assertTrue(steps.withCredentialsBindings.any { bindings ->
-            bindings.any { it.variable == 'VAULT_TOKEN' && it.credentialsId == 'vault-credentials' }
+            bindings.any { (it.variable ?: it.tokenVariable) == 'VAULT_TOKEN' && it.credentialsId == 'vault-credentials' }
         }, 'Expected vault credentials to be bound during template rendering')
     }
 
@@ -92,7 +92,7 @@ class DeployPipelineTest {
         void withCredentials(List bindings, Closure body) {
             withCredentialsBindings << bindings
             bindings.each { Map binding ->
-                String varName = binding.variable ?: binding.usernameVariable ?: binding.passwordVariable
+                String varName = binding.variable ?: binding.usernameVariable ?: binding.passwordVariable ?: binding.tokenVariable
                 if (varName) {
                     env[varName] = "secret-${binding.credentialsId ?: binding.id}"
                 }

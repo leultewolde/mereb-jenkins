@@ -23,15 +23,27 @@ class CredentialHelper implements Serializable {
             }
             Map cred = entry as Map
             String type = (cred.type ?: 'string').toString()
-            switch (type) {
+            String id = (cred.id ?: cred.credentialsId ?: '').toString()
+            String envVar = (cred.env ?: cred.variable ?: '').toString()
+            String lowerType = type.toLowerCase()
+            switch (lowerType) {
+                case 'vault':
+                case 'vaulttoken':
+                    bindings << vaultTokenBinding(id, envVar)
+                    break
                 case 'file':
-                    bindings << [$class: 'FileBinding', credentialsId: cred.id, variable: cred.env ?: cred.variable ?: 'SECRET_FILE']
+                    bindings << [$class: 'FileBinding', credentialsId: id, variable: envVar ?: 'SECRET_FILE']
                     break
                 case 'usernamePassword':
-                    bindings << [$class: 'UsernamePasswordMultiBinding', credentialsId: cred.id, usernameVariable: cred.usernameEnv ?: 'USERNAME', passwordVariable: cred.passwordEnv ?: 'PASSWORD']
+                case 'usernamepassword':
+                    bindings << [$class: 'UsernamePasswordMultiBinding', credentialsId: id, usernameVariable: cred.usernameEnv ?: 'USERNAME', passwordVariable: cred.passwordEnv ?: 'PASSWORD']
                     break
                 default:
-                    bindings << [$class: 'StringBinding', credentialsId: cred.id, variable: cred.env ?: 'SECRET']
+                    if (shouldUseVaultTokenFallback(lowerType, envVar, id)) {
+                        bindings << vaultTokenBinding(id, envVar)
+                    } else {
+                        bindings << [$class: 'StringBinding', credentialsId: id, variable: envVar ?: 'SECRET']
+                    }
                     break
             }
         }
@@ -86,5 +98,22 @@ class CredentialHelper implements Serializable {
         }
         String script = "printenv ${safeName} || true"
         return steps.sh(script: script, returnStdout: true).trim()
+    }
+
+    private static Map vaultTokenBinding(String id, String envVar) {
+        String variable = envVar ?: 'VAULT_TOKEN'
+        return [$class: 'VaultTokenCredentialBinding', credentialsId: id, tokenVariable: variable]
+    }
+
+    private static boolean shouldUseVaultTokenFallback(String lowerType, String envVar, String id) {
+        if ('string'.equals(lowerType)) {
+            if (envVar?.toUpperCase()?.contains('VAULT_TOKEN')) {
+                return true
+            }
+            if (id?.toLowerCase()?.contains('vault')) {
+                return true
+            }
+        }
+        return false
     }
 }
