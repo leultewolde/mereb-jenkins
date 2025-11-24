@@ -174,13 +174,18 @@ class ValuesTemplateRenderer implements Serializable {
     }
 
     private void ensureParentDirectory(String path) {
-        File file = new File(path)
-        File parent = file.parentFile
-        if (parent) {
-            String dir = parent.path
-            if (dir?.trim()) {
-                steps.sh(script: "mkdir -p '${dir}'")
-            }
+        if (!path?.trim()) {
+            return
+        }
+        String normalized = path.replace('\\', '/')
+        int idx = normalized.lastIndexOf('/')
+        if (idx < 0) {
+            return
+        }
+        String dir = normalized.substring(0, idx)?.trim()
+        if (dir) {
+            String escaped = dir.replace("'", "'\"'\"'")
+            steps.sh(script: "mkdir -p '${escaped}'")
         }
     }
 
