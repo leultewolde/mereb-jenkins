@@ -100,43 +100,46 @@ class MicrofrontendPipeline implements Serializable {
     }
 
     private void prepareTools(String workspace, String nodeVersion) {
-        String script = """#!/usr/bin/env bash
+        String script = '''#!/usr/bin/env bash
 set -euo pipefail
 
-AWS_DIR="${workspace}/.ci/aws-cli"
-AWS_BIN="${workspace}/.ci/aws-cli/bin"
-NODE_ARCHIVE="node-v${nodeVersion}-linux-x64"
-NODE_DIR="${workspace}/.ci/\${NODE_ARCHIVE}"
-NODE_BIN="\${NODE_DIR}/bin"
+AWS_DIR="__WORKSPACE__/.ci/aws-cli"
+AWS_BIN="__WORKSPACE__/.ci/aws-cli/bin"
+NODE_ARCHIVE="node-v__NODE_VERSION__-linux-x64"
+NODE_DIR="__WORKSPACE__/.ci/${NODE_ARCHIVE}"
+NODE_BIN="${NODE_DIR}/bin"
 
-if [ -d "\${AWS_BIN}" ]; then
-  export PATH="\${AWS_BIN}:\${PATH}"
+if [ -d "${AWS_BIN}" ]; then
+  export PATH="${AWS_BIN}:${PATH}"
 fi
 if ! command -v aws >/dev/null 2>&1; then
-  echo "[mfe] aws CLI not found; installing to \${AWS_DIR}"
+  echo "[mfe] aws CLI not found; installing to ${AWS_DIR}"
   tmp_dir="$(mktemp -d)"
-  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "\${tmp_dir}/awscliv2.zip"
-  unzip -q "\${tmp_dir}/awscliv2.zip" -d "\${tmp_dir}"
-  mkdir -p "\${AWS_DIR}"
-  "\${tmp_dir}/aws/install" -i "\${AWS_DIR}" -b "\${AWS_BIN}" >/dev/null
-  rm -rf "\${tmp_dir}"
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "${tmp_dir}/awscliv2.zip"
+  unzip -q "${tmp_dir}/awscliv2.zip" -d "${tmp_dir}"
+  mkdir -p "${AWS_DIR}"
+  "${tmp_dir}/aws/install" -i "${AWS_DIR}" -b "${AWS_BIN}" >/dev/null
+  rm -rf "${tmp_dir}"
 fi
 
-if [ -d "\${NODE_BIN}" ]; then
-  export PATH="\${NODE_BIN}:\${PATH}"
+if [ -d "${NODE_BIN}" ]; then
+  export PATH="${NODE_BIN}:${PATH}"
 fi
 if ! command -v node >/dev/null 2>&1; then
-  echo "[mfe] node runtime not found; installing ${nodeVersion} locally"
+  echo "[mfe] node runtime not found; installing __NODE_VERSION__ locally"
   tmp_dir="$(mktemp -d)"
-  curl -fsSL "https://nodejs.org/dist/v${nodeVersion}/\${NODE_ARCHIVE}.tar.xz" -o "\${tmp_dir}/node.tar.xz"
-  tar -xJf "\${tmp_dir}/node.tar.xz" -C "\${tmp_dir}"
-  rm -rf "\${NODE_DIR}"
-  mkdir -p "$(dirname "\${NODE_DIR}")"
-  mv "\${tmp_dir}/\${NODE_ARCHIVE}" "\${NODE_DIR}"
-  rm -rf "\${tmp_dir}"
+  curl -fsSL "https://nodejs.org/dist/v__NODE_VERSION__/${NODE_ARCHIVE}.tar.xz" -o "${tmp_dir}/node.tar.xz"
+  tar -xJf "${tmp_dir}/node.tar.xz" -C "${tmp_dir}"
+  rm -rf "${NODE_DIR}"
+  mkdir -p "$(dirname "${NODE_DIR}")"
+  mv "${tmp_dir}/${NODE_ARCHIVE}" "${NODE_DIR}"
+  rm -rf "${tmp_dir}"
 fi
-"""
-        steps.sh(script: script, label: 'Prepare MFE tools')
+'''
+        String rendered = script
+            .replace('__WORKSPACE__', workspace)
+            .replace('__NODE_VERSION__', nodeVersion)
+        steps.sh(script: rendered, label: 'Prepare MFE tools')
     }
 
     private String toolPath(String workspace, String nodeVersion) {
