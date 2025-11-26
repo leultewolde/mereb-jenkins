@@ -71,6 +71,29 @@ class ConfigValidator implements Serializable {
             errors << "terraform.environments must be a map"
         }
 
+        if (cfg.microfrontend && !(cfg.microfrontend instanceof Map)) {
+            errors << "microfrontend must be a map"
+        }
+        Map mfeSection = cfg.microfrontend instanceof Map ? (cfg.microfrontend as Map) : [:]
+        if (mfeSection.environments && !(mfeSection.environments instanceof Map)) {
+            errors << "microfrontend.environments must be a map"
+        }
+        if (mfeSection.environments instanceof Map) {
+            Map envNodes = mfeSection.environments as Map
+            List<String> envNames = envNodes.keySet().collect { it.toString() }
+            if (mfeSection.order instanceof List) {
+                List<String> invalid = (mfeSection.order as List).collect { it.toString() }.findAll { !envNames.contains(it) }
+                if (!invalid.isEmpty()) {
+                    errors << "microfrontend.order references unknown environments: ${invalid.join(', ')}"
+                }
+            }
+            envNodes.each { name, node ->
+                if (!(node instanceof Map)) {
+                    errors << "microfrontend.${name} must be a map"
+                }
+            }
+        }
+
         if (cfg.release?.autoTag instanceof Map) {
             Map autoTag = cfg.release.autoTag as Map
             if ((autoTag.enabled == null || autoTag.enabled) && !autoTag.bump) {

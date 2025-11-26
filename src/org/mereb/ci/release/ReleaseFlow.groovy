@@ -43,6 +43,7 @@ class ReleaseFlow implements Serializable {
                 return
             }
             steps.stage(name) {
+                maybeRequestApproval(stageCfg.approval as Map, "Run '${name}'?")
                 List<String> envList = mapToEnvList(stageCfg.env instanceof Map ? stageCfg.env : [:])
                 envList << "RELEASE_TAG=${effectiveTag}"
                 Map bindingSource = [credentials: stageCfg.credentials]
@@ -129,6 +130,20 @@ class ReleaseFlow implements Serializable {
             return
         }
         String message = approval.message ?: 'Create release tag?'
+        String ok = approval.ok ?: 'Approve'
+        Object submitter = approval.submitter
+        if (submitter) {
+            steps.input message: message, ok: ok, submitter: submitter.toString()
+        } else {
+            steps.input message: message, ok: ok
+        }
+    }
+
+    private void maybeRequestApproval(Map approval, String defaultMessage) {
+        if (!approval || approval.isEmpty()) {
+            return
+        }
+        String message = approval.message ?: defaultMessage
         String ok = approval.ok ?: 'Approve'
         Object submitter = approval.submitter
         if (submitter) {

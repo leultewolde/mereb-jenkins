@@ -12,6 +12,7 @@ The shared library expects a `.ci/ci.yml` file at the root of each service repos
 | `image` | `map/boolean` | Docker build/push configuration. Set to `false` to disable container workflows. |
 | `deploy` | `map` | Declarative Helm deploy definitions. |
 | `terraform` | `map` | Infrastructure orchestration settings. |
+| `microfrontend` | `map` | Publish MFEs to CDN buckets with environment gates. |
 | `release` | `map` | Auto-tag + GitHub release automation. |
 
 ## Build Section
@@ -95,6 +96,52 @@ terraform:
 ```
 
 The pipeline auto-installs Terraform (per `version`), selects workspaces, and can defer environments gated on tags (e.g., `when: 'tag=^v'`).
+
+## Microfrontend Section
+```yaml
+microfrontend:
+  name: mfe-admin
+  distDir: dist
+  manifestScript: scripts/update-manifest.js
+  checkScript: scripts/check-remote-entry.js
+  nodeVersion: 20.19.2
+  aws:
+    endpoint: https://minio.leultewolde.com
+    region: us-east-1
+    forcePathStyle: true
+    credential:
+      id: minio-credentials
+      type: usernamePassword
+      usernameEnv: AWS_ACCESS_KEY_ID
+      passwordEnv: AWS_SECRET_ACCESS_KEY
+  order: [dev, stg, prd]
+  environments:
+    dev:
+      displayName: Dev CDN
+      bucket: cdn-dev
+      publicBase: https://cdn-dev.mereb.app
+      when: 'branch=main & !pr'
+    stg:
+      displayName: Staging CDN
+      bucket: cdn-stg
+      publicBase: https://cdn-stg.mereb.app
+      when: 'branch=main & !pr'
+      approval:
+        message: Promote admin remote to staging?
+        submitter: release-managers
+    prd:
+      displayName: Prod CDN
+      bucket: cdn
+      publicBase: https://cdn.mereb.app
+      when: 'tag=^v[0-9].*'
+      approval:
+        message: Publish admin remote to production?
+        submitter: release-managers
+```
+
+- Uses the release tag when available (falls back to the commit SHA) to version S3 paths.
+- `manifestFlag`/`manifestEntry` default to the `name` (`mfe-admin` → `--admin`, `mfe_admin` entry).
+- Approvals run before staging/production environments; `forcePathStyle` and `endpoint` support Minio/S3 compatibles.
 
 ## Release Section
 ```yaml

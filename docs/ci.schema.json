@@ -111,6 +111,7 @@
       },
       "additionalProperties": true
     },
+    "microfrontend": { "$ref": "#/definitions/microfrontend" },
     "release": {
       "type": "object",
       "properties": {
@@ -213,6 +214,77 @@
         },
         "additionalProperties": true
       }
+    },
+    "credential": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "env": { "type": "string" },
+        "usernameEnv": { "type": "string" },
+        "passwordEnv": { "type": "string" }
+      },
+      "required": ["id"],
+      "additionalProperties": true
+    },
+    "microfrontend": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string" },
+        "manifestEntry": { "type": "string" },
+        "manifestFlag": { "type": "string" },
+        "distDir": { "type": "string" },
+        "manifestScript": { "type": "string" },
+        "checkScript": { "type": "string" },
+        "nodeVersion": { "type": "string" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "order": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "aws": {
+          "type": "object",
+          "properties": {
+            "endpoint": { "type": "string" },
+            "region": { "type": "string" },
+            "forcePathStyle": { "type": "boolean" },
+            "credential": { "$ref": "#/definitions/credential" },
+            "credentials": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/credential" }
+            }
+          },
+          "additionalProperties": true
+        },
+        "environments": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "displayName": { "type": "string" },
+              "bucket": { "type": "string" },
+              "publicBase": { "type": "string" },
+              "when": { "type": "string" },
+              "env": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              },
+              "credentials": {
+                "type": "array",
+                "items": { "$ref": "#/definitions/credential" }
+              },
+              "approval": { "$ref": "#/definitions/approval" },
+              "clearBeforeSync": { "type": "boolean" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
     },
     "autoTag": {
       "type": "object",

@@ -44,6 +44,7 @@ class ConfigNormalizer implements Serializable {
         cfg.buildStages = computeBuildStages(preset, buildSection)
         cfg.requiresGradleHome = needsGradleHome(preset, cfg.buildStages)
         cfg.releaseStages = normalizeUserStages(source.get('releaseStages'))
+        cfg.microfrontend = normalizeMicrofrontend(source.get('microfrontend') ?: source.get('mfe'), defaultEnvOrder)
         cfg.image = normalizeImage(source, primaryConfig)
         cfg.sbom = normalizeSbom(source.get('sbom'))
         cfg.scan = normalizeScan(source.get('scan'))
@@ -762,11 +763,111 @@ class ConfigNormalizer implements Serializable {
                 env        : toStringMap(stageCfg.get('env')),
                 verb       : asString(stageCfg.get('verb')) ?: null,
                 sh         : asString(stageCfg.get('sh')) ?: null,
-                credentials: stageCfg.get('credentials') instanceof List ? stageCfg.get('credentials') : []
+                credentials: stageCfg.get('credentials') instanceof List ? stageCfg.get('credentials') : [],
+                approval   : normalizeApproval(stageCfg.get('approval'))
             ]
             stages << normalized
         }
         return stages
+    }
+
+    private static Map normalizeMicrofrontend(Object raw, List<String> defaultEnvOrder) {
+        Map data = mapCopy(raw)
+        if (data.isEmpty()) {
+            return [enabled: false, environments: [:], order: []]
+        }
+
+        boolean enabled = data.containsKey('enabled') ? (data.get('enabled') as Boolean) : true
+        String name = asString(data.get('name') ?: data.get('remoteName') ?: data.get('app') ?: 'microfrontend')
+        String manifestEntry = asString(data.get('manifestEntry') ?: data.get('manifestKey'))
+        if (!manifestEntry) {
+            manifestEntry = name.replaceAll(/[^A-Za-z0-9_]/, '_')
+        }
+        String manifestFlag = asString(data.get('manifestFlag'))
+        if (!manifestFlag) {
+            manifestFlag = name.startsWith('mfe-') && name.length() > 4 ? name.substring(4) : name
+            manifestFlag = manifestFlag.replaceAll(/[^A-Za-z0-9_-]/, '')
+        }
+
+        Map awsRaw = mapCopy(data.get('aws'))
+        List<Map> awsCreds = []
+        if (awsRaw.get('credentials') instanceof List) {
+            awsCreds.addAll(normalizeCredentialList(awsRaw.get('credentials')))
+        } else if (awsRaw.get('credential') instanceof Map || awsRaw.get('credentialId')) {
+            Map cred = mapCopy(awsRaw.get('credential'))
+            String id = asString(awsRaw.get('credentialId') ?: cred.get('id'))
+            if (id) {
+                Map normalizedCred = [
+                    id          : id,
+                    type        : asString(cred.get('type') ?: awsRaw.get('credentialType') ?: 'usernamePassword'),
+                    usernameEnv : asString(cred.get('usernameEnv') ?: 'AWS_ACCESS_KEY_ID'),
+                    passwordEnv : asString(cred.get('passwordEnv') ?: 'AWS_SECRET_ACCESS_KEY'),
+                    env         : asString(cred.get('env')),
+                ]
+                awsCreds << normalizedCred
+            }
+        }
+
+        Map awsCfg = [
+            endpoint       : asString(awsRaw.get('endpoint') ?: awsRaw.get('endpointUrl') ?: awsRaw.get('endpointURL') ?: awsRaw.get('s3Endpoint') ?: awsRaw.get('url')),
+            region         : asString(awsRaw.get('region') ?: 'us-east-1'),
+            forcePathStyle : awsRaw.containsKey('forcePathStyle') ? (awsRaw.get('forcePathStyle') as Boolean) : true,
+            credentials    : awsCreds
+        ]
+
+        Map envs = [:]
+        if (data.get('environments') instanceof Map) {
+            Map rawEnvs = data.get('environments') as Map
+            rawEnvs.each { Object key, Object value ->
+                if (!(value instanceof Map)) {
+                    return
+                }
+                Map envCfg = value as Map
+                String envName = key?.toString()
+                Map normalizedEnv = [
+                    name           : envName,
+                    displayName    : asString(envCfg.get('displayName') ?: envCfg.get('name') ?: envName),
+                    when           : asString(envCfg.get('when')),
+                    bucket         : asString(envCfg.get('bucket') ?: envCfg.get('s3Bucket')),
+                    publicBase     : asString(envCfg.get('publicBase') ?: envCfg.get('cdn') ?: envCfg.get('endpoint')),
+                    approval       : normalizeApproval(envCfg.get('approval')),
+                    env            : toStringMap(envCfg.get('env')),
+                    credentials    : normalizeCredentialList(envCfg.get('credentials')),
+                    clearBeforeSync: envCfg.containsKey('clearBeforeSync') ? (envCfg.get('clearBeforeSync') as Boolean) : true
+                ]
+                envs.put(envName, normalizedEnv)
+            }
+        }
+
+        List<String> order = toStringList(data.get('order'))
+        if (!order && !envs.isEmpty()) {
+            order = []
+            defaultEnvOrder?.each { envName ->
+                if (envs.containsKey(envName)) {
+                    order << envName
+                }
+            }
+            envs.keySet().each { envName ->
+                if (!order.contains(envName)) {
+                    order << envName
+                }
+            }
+        }
+
+        return [
+            enabled       : enabled && !envs.isEmpty(),
+            name          : name,
+            manifestEntry : manifestEntry,
+            manifestFlag  : manifestFlag ?: manifestEntry,
+            distDir       : asString(data.get('distDir') ?: 'dist'),
+            manifestScript: asString(data.get('manifestScript') ?: 'scripts/update-manifest.js'),
+            checkScript   : asString(data.get('checkScript') ?: 'scripts/check-remote-entry.js'),
+            nodeVersion   : asString(data.get('nodeVersion') ?: data.get('node') ?: '20.19.2'),
+            env           : toStringMap(data.get('env')),
+            aws           : awsCfg,
+            order         : order ?: [],
+            environments  : envs
+        ]
     }
 
     private static Map mapCopy(Object candidate) {

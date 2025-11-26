@@ -10,17 +10,20 @@ class ReleaseOrchestrator implements Serializable {
     private final def steps
     private final def terraformPipeline
     private final Closure handleRelease
+    private final Closure runMicrofrontends
     private final Closure runReleaseStages
     private final Closure publishRelease
 
     ReleaseOrchestrator(def steps,
                         def terraformPipeline,
                         Closure handleRelease,
+                        Closure runMicrofrontends,
                         Closure runReleaseStages,
                         Closure publishRelease) {
         this.steps = steps
         this.terraformPipeline = terraformPipeline
         this.handleRelease = handleRelease
+        this.runMicrofrontends = runMicrofrontends
         this.runReleaseStages = runReleaseStages
         this.publishRelease = publishRelease
     }
@@ -46,7 +49,10 @@ class ReleaseOrchestrator implements Serializable {
             cfg.release?.autoTag,
             deployOrder,
             { handleRelease?.call(cfg.release, state) },
-            { runReleaseStages?.call(cfg.releaseStages) },
+            {
+                runMicrofrontends?.call(cfg.microfrontend, state)
+                runReleaseStages?.call(cfg.releaseStages)
+            },
             { runDeferredTerraform() }
         )
 

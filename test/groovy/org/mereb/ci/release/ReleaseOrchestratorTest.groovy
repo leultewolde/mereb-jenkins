@@ -12,6 +12,7 @@ class ReleaseOrchestratorTest {
         int handleCalled = 0
         int stagesCalled = 0
         int publishCalled = 0
+        int microCalled = 0
 
         ReleaseOrchestrator orchestrator = new ReleaseOrchestrator(
             steps,
@@ -20,6 +21,7 @@ class ReleaseOrchestratorTest {
                 handleCalled++
                 steps.env.RELEASE_TAG = 'v1.0.0'
             },
+            { cfg, state -> microCalled++ },
             { stages -> stagesCalled++ },
             { releaseCfg, state -> publishCalled++ }
         )
@@ -38,6 +40,7 @@ class ReleaseOrchestratorTest {
         assertEquals([null, ['prd']], terraform.calls*.order)
         assertEquals('v1.0.0', steps.env.TAG_NAME)
         assertEquals(1, handleCalled)
+        assertEquals(1, microCalled)
         assertEquals(1, stagesCalled)
         assertEquals(1, publishCalled)
     }
@@ -52,6 +55,7 @@ class ReleaseOrchestratorTest {
             steps,
             terraform,
             { releaseCfg, state -> handleCalled++ },
+            { cfg, state -> },
             { stages -> },
             { releaseCfg, state -> }
         )

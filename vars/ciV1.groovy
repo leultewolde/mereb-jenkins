@@ -6,6 +6,7 @@ import org.mereb.ci.config.ConfigValidator
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.deploy.DeployPipeline
 import org.mereb.ci.docker.DockerPipeline
+import org.mereb.ci.mfe.MicrofrontendPipeline
 import org.mereb.ci.release.ReleaseFlow
 import org.mereb.ci.release.ReleaseOrchestrator
 import org.mereb.ci.terraform.TerraformPipeline
@@ -81,10 +82,12 @@ def call(Map args = [:]) {
         ReleaseFlow releaseFlow = new ReleaseFlow(this, credentialHelper, verbRunner.&run)
         TerraformPipeline terraformPipeline = new TerraformPipeline(this, credentialHelper, pipelineHelper.&awaitApproval)
         DeployPipeline deployPipeline = new DeployPipeline(this, credentialHelper)
+        MicrofrontendPipeline microfrontendPipeline = new MicrofrontendPipeline(this, credentialHelper, pipelineHelper.&awaitApproval)
         ReleaseOrchestrator releaseOrchestrator = new ReleaseOrchestrator(
             this,
             terraformPipeline,
             releaseFlow.&handleRelease,
+            microfrontendPipeline.&run,
             releaseFlow.&runReleaseStages,
             releaseFlow.&publishRelease
         )
