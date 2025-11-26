@@ -818,9 +818,12 @@ class ConfigNormalizer implements Serializable {
         Map envs = [:]
         if (data.get('environments') instanceof Map) {
             Map rawEnvs = data.get('environments') as Map
-            rawEnvs.each { Object key, Object value ->
+            for (Object entryObj : rawEnvs.entrySet()) {
+                Map.Entry entry = entryObj as Map.Entry
+                Object key = entry.getKey()
+                Object value = entry.getValue()
                 if (!(value instanceof Map)) {
-                    return
+                    continue
                 }
                 Map envCfg = value as Map
                 String envName = key?.toString()
@@ -842,12 +845,16 @@ class ConfigNormalizer implements Serializable {
         List<String> order = toStringList(data.get('order'))
         if (!order && !envs.isEmpty()) {
             order = []
-            defaultEnvOrder?.each { envName ->
-                if (envs.containsKey(envName)) {
-                    order << envName
+            if (defaultEnvOrder) {
+                for (Object envNameObj : defaultEnvOrder) {
+                    String envName = envNameObj?.toString()
+                    if (envs.containsKey(envName)) {
+                        order << envName
+                    }
                 }
             }
-            envs.keySet().each { envName ->
+            for (Object envNameObj : envs.keySet()) {
+                String envName = envNameObj?.toString()
                 if (!order.contains(envName)) {
                     order << envName
                 }

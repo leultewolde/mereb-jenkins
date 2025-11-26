@@ -103,4 +103,46 @@ class ConfigNormalizerTest {
         assertEquals('registry.leultewolde.com/apps/svc-feed', cfg.image.repository)
         assertEquals('registry.leultewolde.com', cfg.image.registryHost)
     }
+
+    @Test
+    void "normalizes microfrontend environments with default order"() {
+        Map raw = [
+            version       : 1,
+            build         : [:],
+            image         : false,
+            deploy        : [:],
+            terraform     : [:],
+            release       : [:],
+            microfrontend : [
+                name        : 'mfe-admin',
+                distDir     : 'dist',
+                manifestScript: 'scripts/update-manifest.js',
+                checkScript : 'scripts/check-remote-entry.js',
+                aws         : [
+                    endpoint      : 'https://minio.example.com',
+                    credential    : [id: 'minio-credentials']
+                ],
+                environments: [
+                    dev: [
+                        bucket    : 'cdn-dev',
+                        publicBase: 'https://cdn-dev.example.com',
+                        when      : 'branch=main & !pr'
+                    ],
+                    stg: [
+                        bucket    : 'cdn-stg',
+                        publicBase: 'https://cdn-stg.example.com',
+                        approval  : [message: 'Approve staging publish?']
+                    ]
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev', 'stg', 'prd'], '.ci/ci.yml')
+
+        assertTrue(cfg.microfrontend.enabled)
+        assertEquals(['dev', 'stg'], cfg.microfrontend.order)
+        assertEquals('cdn-dev', cfg.microfrontend.environments.dev.bucket)
+        assertEquals('https://cdn-stg.example.com', cfg.microfrontend.environments.stg.publicBase)
+        assertEquals('mfe-admin', cfg.microfrontend.name)
+    }
 }
