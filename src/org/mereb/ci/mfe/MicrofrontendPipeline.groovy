@@ -209,32 +209,32 @@ BUCKET=${shellEscape(bucket)}
 PUBLIC_BASE=${shellEscape(publicBase.replaceAll(/\/$/, ''))}
 MANIFEST_SCRIPT=${shellEscape(manifestScript)}
 
-if [ -z "${'$'}{BUCKET}" ] || [ -z "${'$'}{PUBLIC_BASE}" ]; then
+if [ -z "\${BUCKET}" ] || [ -z "\${PUBLIC_BASE}" ]; then
   echo "[publish] bucket and publicBase are required" >&2
   exit 1
 fi
 
-if [ ! -d "${'$'}{DIST_DIR}" ]; then
-  echo "[publish] build artifacts not found at ${'$'}{DIST_DIR}; run the build step first." >&2
+if [ ! -d "\${DIST_DIR}" ]; then
+  echo "[publish] build artifacts not found at \${DIST_DIR}; run the build step first." >&2
   exit 1
 fi
 
-if [ ! -f "${'$'}{MANIFEST_SCRIPT}" ]; then
-  echo "[publish] unable to locate manifest updater at ${'$'}{MANIFEST_SCRIPT}" >&2
+if [ ! -f "\${MANIFEST_SCRIPT}" ]; then
+  echo "[publish] unable to locate manifest updater at \${MANIFEST_SCRIPT}" >&2
   exit 1
 fi
 
-AWS_ENDPOINT="${'$'}{AWS_ENDPOINT_URL_S3:-${'$'}{AWS_ENDPOINT_URL:-${'$'}{AWS_S3_ENDPOINT:-}}}"
+AWS_ENDPOINT="\${AWS_ENDPOINT_URL_S3:-\${AWS_ENDPOINT_URL:-\${AWS_S3_ENDPOINT:-}}}"
 AWS_ENDPOINT_ARGS=()
-if [ -n "${'$'}{AWS_ENDPOINT}" ]; then
-  AWS_ENDPOINT_ARGS+=(--endpoint-url "${'$'}{AWS_ENDPOINT}")
+if [ -n "\${AWS_ENDPOINT}" ]; then
+  AWS_ENDPOINT_ARGS+=(--endpoint-url "\${AWS_ENDPOINT}")
 fi
 AWS_SYNC_ARGS=(--delete)
-if [ "${'$'}{#AWS_ENDPOINT_ARGS[@]}" -gt 0 ]; then
-  AWS_SYNC_ARGS+=("${'$'}{AWS_ENDPOINT_ARGS[@]}")
+if [ "\${#AWS_ENDPOINT_ARGS[@]}" -gt 0 ]; then
+  AWS_SYNC_ARGS+=("\${AWS_ENDPOINT_ARGS[@]}")
 fi
 
-DEST="s3://${'$'}{BUCKET}/${'$'}{REMOTE_NAME}/${'$'}{VERSION}"
+DEST="s3://\${BUCKET}/\${REMOTE_NAME}/\${VERSION}"
 """ +
                 (clearBeforeSync ? '''
 echo "[publish] clearing existing artifacts in ${DEST}"
@@ -267,10 +267,10 @@ BUCKET=${shellEscape(bucket)}
 PUBLIC_BASE=${shellEscape(publicBase.replaceAll(/\\/\$/, ''))}
 CHECK_SCRIPT=${shellEscape(checkScript)}
 
-AWS_ENDPOINT="${'$'}{AWS_ENDPOINT_URL_S3:-${'$'}{AWS_ENDPOINT_URL:-${'$'}{AWS_S3_ENDPOINT:-}}}"
+AWS_ENDPOINT="\${AWS_ENDPOINT_URL_S3:-\${AWS_ENDPOINT_URL:-\${AWS_S3_ENDPOINT:-}}}"
 AWS_ENDPOINT_ARGS=()
-if [ -n "${'$'}{AWS_ENDPOINT}" ]; then
-  AWS_ENDPOINT_ARGS+=(--endpoint-url "${'$'}{AWS_ENDPOINT}")
+if [ -n "\${AWS_ENDPOINT}" ]; then
+  AWS_ENDPOINT_ARGS+=(--endpoint-url "\${AWS_ENDPOINT}")
 fi
 
 TMP_DIR="$(mktemp -d)"
@@ -300,7 +300,7 @@ node "${CHECK_SCRIPT}" \
   --bucket "${BUCKET}" \
   --endpoint "${PUBLIC_BASE}" \
   --key "${remoteName}/${version}/remoteEntry.js" \
-  --region "${'$'}{AWS_REGION:-${'$'}{AWS_DEFAULT_REGION:-us-east-1}}"
+  --region "\${AWS_REGION:-\${AWS_DEFAULT_REGION:-us-east-1}}"
 """
     }
 }
