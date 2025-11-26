@@ -260,17 +260,17 @@ node "${MANIFEST_SCRIPT}" \
                                 String checkScript) {
         String bucket = envCfg.bucket ?: ''
         String publicBase = envCfg.publicBase ?: ''
-        return """#!/usr/bin/env bash
+        String template = '''#!/usr/bin/env bash
 set -euo pipefail
 
-BUCKET=${shellEscape(bucket)}
-PUBLIC_BASE=${shellEscape(publicBase.replaceAll(/\\/\$/, ''))}
-CHECK_SCRIPT=${shellEscape(checkScript)}
+BUCKET=__BUCKET__
+PUBLIC_BASE=__PUBLIC_BASE__
+CHECK_SCRIPT=__CHECK_SCRIPT__
 
-AWS_ENDPOINT="\${AWS_ENDPOINT_URL_S3:-\${AWS_ENDPOINT_URL:-\${AWS_S3_ENDPOINT:-}}}"
+AWS_ENDPOINT="${AWS_ENDPOINT_URL_S3:-${AWS_ENDPOINT_URL:-${AWS_S3_ENDPOINT:-}}}"
 AWS_ENDPOINT_ARGS=()
-if [ -n "\${AWS_ENDPOINT}" ]; then
-  AWS_ENDPOINT_ARGS+=(--endpoint-url "\${AWS_ENDPOINT}")
+if [ -n "${AWS_ENDPOINT}" ]; then
+  AWS_ENDPOINT_ARGS+=(--endpoint-url "${AWS_ENDPOINT}")
 fi
 
 TMP_DIR="$(mktemp -d)"
@@ -278,9 +278,9 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 MANIFEST_PATH="${TMP_DIR}/${BUCKET}-manifest.json"
 aws s3 cp "${AWS_ENDPOINT_ARGS[@]}" "s3://${BUCKET}/manifest.json" "${MANIFEST_PATH}"
 
-EXPECTED="${PUBLIC_BASE}/${remoteName}/${version}/remoteEntry.js"
+EXPECTED="${PUBLIC_BASE}/__REMOTE_NAME__/__VERSION__/remoteEntry.js"
 ACTUAL="$(
-  MANIFEST_FILE="${MANIFEST_PATH}" node --input-type=module -e "import fs from 'node:fs'; const content = fs.readFileSync(process.env.MANIFEST_FILE, 'utf8'); const manifest = JSON.parse(content); process.stdout.write(manifest.''' + manifestEntry + ''' ? String(manifest.''' + manifestEntry + ''') : '');"
+  MANIFEST_FILE="${MANIFEST_PATH}" node --input-type=module -e "import fs from 'node:fs'; const content = fs.readFileSync(process.env.MANIFEST_FILE, 'utf8'); const manifest = JSON.parse(content); process.stdout.write(manifest.__MANIFEST_ENTRY__ ? String(manifest.__MANIFEST_ENTRY__) : '');"
 )"
 
 if [ "${ACTUAL}" != "${EXPECTED}" ]; then
@@ -299,8 +299,16 @@ echo "[verify] checking public URL ${EXPECTED}"
 node "${CHECK_SCRIPT}" \
   --bucket "${BUCKET}" \
   --endpoint "${PUBLIC_BASE}" \
-  --key "${remoteName}/${version}/remoteEntry.js" \
-  --region "\${AWS_REGION:-\${AWS_DEFAULT_REGION:-us-east-1}}"
-"""
+  --key "__REMOTE_NAME__/__VERSION__/remoteEntry.js" \
+  --region "${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+'''
+
+        return template
+            .replace('__BUCKET__', shellEscape(bucket))
+            .replace('__PUBLIC_BASE__', shellEscape(publicBase.replaceAll(/\/$/, '')))
+            .replace('__CHECK_SCRIPT__', shellEscape(checkScript))
+            .replace('__REMOTE_NAME__', remoteName)
+            .replace('__VERSION__', version)
+            .replace('__MANIFEST_ENTRY__', manifestEntry)
     }
 }
