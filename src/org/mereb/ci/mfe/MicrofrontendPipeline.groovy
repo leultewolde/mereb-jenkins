@@ -70,29 +70,49 @@ class MicrofrontendPipeline implements Serializable {
         String checkScript = (cfg.checkScript ?: 'scripts/check-remote-entry.js').toString()
         String version = resolveVersion(state)
 
-        order.each { String envName ->
-            Map envCfg = envs[envName]
+        for (String envName : order) {
+            String envKey = envName?.toString()
+            String envLower = envKey?.toLowerCase()
+            Map envCfg = envs[envKey]
             if (!envCfg) {
-                return
+                continue
             }
             if (!Helpers.matchCondition(envCfg.when as String, steps.env)) {
-                steps.echo "microfrontend ${remoteName}: skipping ${envName} (condition '${envCfg.when}' not met)"
-                return
+                steps.echo "microfrontend ${remoteName}: skipping ${envKey} (condition '${envCfg.when}' not met)"
+                continue
             }
-            String stageLabel = envCfg.displayName ?: envName
-            steps.stage("MFE ${stageLabel}") {
-                approvalHandler?.call(envCfg.approval as Map, "Publish ${remoteName} to ${stageLabel}?")
-                List<Map> bindings = []
-                bindings.addAll(baseBindings)
-                bindings.addAll(credentialHelper.bindingsFor(envCfg))
+            String stageLabel = envCfg.displayName ?: envKey
+            Map approvalCfg = envCfg.approval instanceof Map ? (envCfg.approval as Map) : [:]
+            if (approvalCfg.isEmpty() && ['stg', 'prd', 'prod'].contains(envLower)) {
+                approvalCfg = [message: "Publish ${remoteName} to ${stageLabel}?", ok: 'Approve']
+            }
 
-                List<String> envList = []
-                envList.addAll(baseEnv)
-                envList.addAll(mapToEnvList(envCfg.env))
+            List<Map> bindings = []
+            bindings.addAll(baseBindings)
+            bindings.addAll(credentialHelper.bindingsFor(envCfg))
 
+            List<String> envList = []
+            envList.addAll(baseEnv)
+            envList.addAll(mapToEnvList(envCfg.env))
+
+            if (approvalCfg && !approvalCfg.isEmpty()) {
+                steps.stage("MFE ${stageLabel} Approval") {
+                    approvalHandler?.call(approvalCfg as Map, "Publish ${remoteName} to ${stageLabel}?")
+                }
+            }
+
+            steps.stage("MFE ${stageLabel} Deploy") {
                 credentialHelper.withOptionalCredentials(bindings) {
                     steps.withEnv(envList) {
-                        steps.sh(script: publishScript(remoteName, manifestFlag, manifestEntry, distDir, manifestScript, checkScript, envCfg, version), label: "Publish ${stageLabel}")
+                        steps.sh(script: publishScript(remoteName, manifestFlag, distDir, manifestScript, envCfg, version), label: "Publish ${stageLabel}")
+                    }
+                }
+            }
+
+            steps.stage("MFE ${stageLabel} Test") {
+                credentialHelper.withOptionalCredentials(bindings) {
+                    steps.withEnv(envList) {
+                        steps.sh(script: verifyScript(remoteName, manifestEntry, envCfg, version, checkScript), label: "Verify ${stageLabel}")
                     }
                 }
             }
@@ -172,10 +192,8 @@ fi
 
     private String publishScript(String remoteName,
                                  String manifestFlag,
-                                 String manifestEntry,
                                  String distDir,
                                  String manifestScript,
-                                 String checkScript,
                                  Map envCfg,
                                  String version) {
         boolean clearBeforeSync = envCfg.containsKey('clearBeforeSync') ? (envCfg.clearBeforeSync as Boolean) : true
@@ -190,7 +208,6 @@ DIST_DIR=${shellEscape(distDir)}
 BUCKET=${shellEscape(bucket)}
 PUBLIC_BASE=${shellEscape(publicBase.replaceAll(/\/$/, ''))}
 MANIFEST_SCRIPT=${shellEscape(manifestScript)}
-CHECK_SCRIPT=${shellEscape(checkScript)}
 
 if [ -z "${'$'}{BUCKET}" ] || [ -z "${'$'}{PUBLIC_BASE}" ]; then
   echo "[publish] bucket and publicBase are required" >&2
@@ -204,11 +221,6 @@ fi
 
 if [ ! -f "${'$'}{MANIFEST_SCRIPT}" ]; then
   echo "[publish] unable to locate manifest updater at ${'$'}{MANIFEST_SCRIPT}" >&2
-  exit 1
-fi
-
-if [ ! -f "${'$'}{CHECK_SCRIPT}" ]; then
-  echo "[publish] unable to locate check script at ${'$'}{CHECK_SCRIPT}" >&2
   exit 1
 fi
 
@@ -238,13 +250,35 @@ node "${MANIFEST_SCRIPT}" \
   --key manifest.json \
   --public-base "${PUBLIC_BASE}" \
   --''' + manifestFlag + ''' "${VERSION}"
+'''
+    }
+
+    private String verifyScript(String remoteName,
+                                String manifestEntry,
+                                Map envCfg,
+                                String version,
+                                String checkScript) {
+        String bucket = envCfg.bucket ?: ''
+        String publicBase = envCfg.publicBase ?: ''
+        return """#!/usr/bin/env bash
+set -euo pipefail
+
+BUCKET=${shellEscape(bucket)}
+PUBLIC_BASE=${shellEscape(publicBase.replaceAll(/\\/\$/, ''))}
+CHECK_SCRIPT=${shellEscape(checkScript)}
+
+AWS_ENDPOINT="${'$'}{AWS_ENDPOINT_URL_S3:-${'$'}{AWS_ENDPOINT_URL:-${'$'}{AWS_S3_ENDPOINT:-}}}"
+AWS_ENDPOINT_ARGS=()
+if [ -n "${'$'}{AWS_ENDPOINT}" ]; then
+  AWS_ENDPOINT_ARGS+=(--endpoint-url "${'$'}{AWS_ENDPOINT}")
+fi
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 MANIFEST_PATH="${TMP_DIR}/${BUCKET}-manifest.json"
 aws s3 cp "${AWS_ENDPOINT_ARGS[@]}" "s3://${BUCKET}/manifest.json" "${MANIFEST_PATH}"
 
-EXPECTED="${PUBLIC_BASE}/${REMOTE_NAME}/${VERSION}/remoteEntry.js"
+EXPECTED="${PUBLIC_BASE}/${remoteName}/${version}/remoteEntry.js"
 ACTUAL="$(
   MANIFEST_FILE="${MANIFEST_PATH}" node --input-type=module -e "import fs from 'node:fs'; const content = fs.readFileSync(process.env.MANIFEST_FILE, 'utf8'); const manifest = JSON.parse(content); process.stdout.write(manifest.''' + manifestEntry + ''' ? String(manifest.''' + manifestEntry + ''') : '');"
 )"
@@ -265,8 +299,8 @@ echo "[verify] checking public URL ${EXPECTED}"
 node "${CHECK_SCRIPT}" \
   --bucket "${BUCKET}" \
   --endpoint "${PUBLIC_BASE}" \
-  --key "${REMOTE_NAME}/${VERSION}/remoteEntry.js" \
-  --region "${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
-'''
+  --key "${remoteName}/${version}/remoteEntry.js" \
+  --region "${'$'}{AWS_REGION:-${'$'}{AWS_DEFAULT_REGION:-us-east-1}}"
+"""
     }
 }
