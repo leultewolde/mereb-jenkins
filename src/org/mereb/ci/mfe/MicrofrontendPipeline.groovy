@@ -21,7 +21,7 @@ class MicrofrontendPipeline implements Serializable {
         this.approvalHandler = approvalHandler
     }
 
-    void run(Map cfg, Map state) {
+    void run(Map cfg, Map state, Closure tagCallback = null, Closure releaseCallback = null, Map releaseCfg = null) {
         if (!(cfg?.enabled as Boolean)) {
             return
         }
@@ -115,6 +115,13 @@ class MicrofrontendPipeline implements Serializable {
                         steps.sh(script: verifyScript(remoteName, manifestEntry, envCfg, version, checkScript), label: "Verify ${stageLabel}")
                     }
                 }
+            }
+
+            if (tagCallback && envLower == 'stg') {
+                tagCallback.call(releaseCfg ?: [:], state)
+            }
+            if (releaseCallback && (envLower == 'prd' || envLower == 'prod')) {
+                releaseCallback.call(releaseCfg ?: [:], state)
             }
         }
     }

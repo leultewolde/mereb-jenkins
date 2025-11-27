@@ -29,6 +29,18 @@ class ReleaseOrchestrator implements Serializable {
     }
 
     void execute(Map cfg, Map state, Closure deployCallback) {
+        if (cfg.microfrontend?.enabled) {
+            runMicrofrontends?.call(
+                cfg.microfrontend,
+                state,
+                { releaseCfg, currentState -> handleRelease?.call(cfg.release, currentState) },
+                { releaseCfg, currentState -> publishRelease?.call(cfg.release, currentState) },
+                cfg.release
+            )
+            runReleaseStages?.call(cfg.releaseStages)
+            return
+        }
+
         List<String> deferredTerraform = terraformPipeline.run(cfg.terraform, null, true)
         boolean deferredTerraformRan = false
 
