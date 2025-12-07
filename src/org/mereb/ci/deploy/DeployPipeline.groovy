@@ -4,6 +4,7 @@ import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.util.ApprovalHelper
 import org.mereb.ci.util.VaultCredentialHelper
+import org.mereb.ci.util.VaultCredentialHelper.VaultContext
 
 /**
  * Orchestrates Helm-based environment deployments so ciV1 stays declarative.
@@ -52,7 +53,7 @@ class DeployPipeline implements Serializable {
                 requestDeploymentApproval(envCfg)
             }
 
-            VaultCredentialHelper.VaultContext vaultContext = vaultHelper.prepare(envCfg)
+            VaultContext vaultContext = vaultHelper.prepare(envCfg)
             List<Map> deployBindings = vaultContext.bindings
             String vaultAddress = vaultContext.address
             List<String> valuesFiles = determineValuesFiles(envName, envCfg)
@@ -144,7 +145,7 @@ class DeployPipeline implements Serializable {
         return merged
     }
 
-    private void runSmoke(Map envCfg, VaultCredentialHelper.VaultContext vaultContext) {
+    private void runSmoke(Map envCfg, VaultContext vaultContext) {
         Map smoke = envCfg.smoke ?: [:]
         if (!(smoke.url || smoke.script || smoke.command)) {
             return
