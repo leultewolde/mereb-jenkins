@@ -16,6 +16,7 @@ class DeployPipeline implements Serializable {
     private final ValuesTemplateRenderer templateRenderer
     private final ApprovalHelper approvalHelper
     private final VaultCredentialHelper vaultHelper
+    private final HelmDeploymentContextBuilder contextBuilder
 
     DeployPipeline(def steps, CredentialHelper credentialHelper, ValuesTemplateRenderer templateRenderer = null) {
         this.steps = steps
@@ -23,6 +24,7 @@ class DeployPipeline implements Serializable {
         this.templateRenderer = templateRenderer ?: new ValuesTemplateRenderer(steps)
         this.approvalHelper = new ApprovalHelper(steps)
         this.vaultHelper = new VaultCredentialHelper(steps, credentialHelper)
+        this.contextBuilder = new HelmDeploymentContextBuilder(steps, this.templateRenderer, credentialHelper, vaultHelper)
     }
 
     void run(Map cfg, Map state, Closure afterEnvCallback = null) {
@@ -55,20 +57,10 @@ class DeployPipeline implements Serializable {
 
             VaultContext vaultContext = vaultHelper.prepare(envCfg)
             List<Map> deployBindings = vaultContext.bindings
-            String vaultAddress = vaultContext.address
-            List<String> valuesFiles = determineValuesFiles(envName, envCfg)
-            List<String> renderedTemplates = []
-            Closure renderTemplates = {
-                renderedTemplates = templateRenderer.render(envName, envCfg)
-            }
-            Closure renderWithCredentials = {
-                credentialHelper.withOptionalCredentials(deployBindings, renderTemplates)
-            }
-            vaultHelper.withVaultEnv(vaultAddress, renderWithCredentials)
-            valuesFiles.addAll(renderedTemplates)
+            HelmDeploymentContext deploymentContext = contextBuilder.build(envName, envCfg, cfg.image, state, vaultContext)
 
             steps.stage("Deploy ${envCfg.displayName}") {
-                Map helmArgs = buildHelmArgs(envCfg, state, cfg.image, valuesFiles)
+                Map helmArgs = deploymentContext.helmArgs
                 Closure runDeploy = {
                     credentialHelper.withRepoCredentials(envCfg.repoCredentials) { Map repoCreds ->
                         Map args = [:]
@@ -95,54 +87,6 @@ class DeployPipeline implements Serializable {
                 requestPromotion(envCfg, envName, order[idx + 1])
             }
         }
-    }
-
-    private List<String> determineValuesFiles(String envName, Map envCfg) {
-        List<String> valuesFiles = []
-        if (envCfg.valuesFiles instanceof List) {
-            valuesFiles.addAll(envCfg.valuesFiles as List<String>)
-        }
-        if (valuesFiles.isEmpty()) {
-            String defaultValues = ".ci/values-${envName}.yaml"
-            if (steps.fileExists(defaultValues)) {
-                valuesFiles = [defaultValues]
-            }
-        }
-        return valuesFiles
-    }
-
-    private Map buildHelmArgs(Map envCfg, Map state, Map imageCfg, List<String> valuesFiles) {
-        Map args = [
-            release     : envCfg.release,
-            namespace   : envCfg.namespace,
-            chart       : envCfg.chart,
-            repo        : envCfg.repo,
-            version     : envCfg.chartVersion,
-            valuesFiles : valuesFiles,
-            set         : mergeImageValues(envCfg.set ?: [:], imageCfg, state),
-            setString   : envCfg.setString,
-            setFile     : envCfg.setFile,
-            kubeContext : envCfg.kubeContext,
-            kubeconfig  : envCfg.kubeconfig,
-            wait        : envCfg.wait,
-            atomic      : envCfg.atomic,
-            timeout     : envCfg.timeout,
-            repoUsername: envCfg.repoUsername,
-            repoPassword: envCfg.repoPassword
-        ]
-        return args
-    }
-
-    private Map mergeImageValues(Map original, Map imageCfg, Map state) {
-        Map merged = [:]
-        merged.putAll(original ?: [:])
-        if (imageCfg?.enabled && state?.repository) {
-            merged['image.repository'] = state.repository
-        }
-        if (imageCfg?.enabled && state?.imageTag) {
-            merged['image.tag'] = state.imageTag
-        }
-        return merged
     }
 
     private void runSmoke(Map envCfg, VaultContext vaultContext) {

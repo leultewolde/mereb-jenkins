@@ -10,7 +10,9 @@ import org.mereb.ci.mfe.MicrofrontendPipeline
 import org.mereb.ci.release.ReleaseFlow
 import org.mereb.ci.release.ReleaseOrchestrator
 import org.mereb.ci.terraform.TerraformPipeline
+import org.mereb.ci.util.ApprovalHelper
 import org.mereb.ci.util.PipelineHelper
+import org.mereb.ci.util.StageExecutor
 import org.mereb.ci.verbs.VerbRunner
 
 import static org.mereb.ci.util.PipelineUtils.*
@@ -79,7 +81,9 @@ def call(Map args = [:]) {
         VerbRunner verbRunner = new VerbRunner(this)
         BuildStages buildStages = new BuildStages(this, verbRunner.&run, credentialHelper)
         DockerPipeline dockerPipeline = new DockerPipeline(this)
-        ReleaseFlow releaseFlow = new ReleaseFlow(this, credentialHelper, verbRunner.&run)
+        ApprovalHelper releaseApprovalHelper = new ApprovalHelper(this)
+        StageExecutor releaseStageExecutor = new StageExecutor(this, credentialHelper)
+        ReleaseFlow releaseFlow = new ReleaseFlow(this, credentialHelper, verbRunner.&run, releaseApprovalHelper, releaseStageExecutor)
         TerraformPipeline terraformPipeline = new TerraformPipeline(this, credentialHelper, pipelineHelper.&awaitApproval)
         DeployPipeline deployPipeline = new DeployPipeline(this, credentialHelper)
         MicrofrontendPipeline microfrontendPipeline = new MicrofrontendPipeline(this, credentialHelper, pipelineHelper.&awaitApproval)

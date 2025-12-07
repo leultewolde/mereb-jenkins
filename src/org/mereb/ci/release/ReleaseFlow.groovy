@@ -24,12 +24,16 @@ class ReleaseFlow implements Serializable {
     private final ApprovalHelper approvalHelper
     private final StageExecutor stageExecutor
 
-    ReleaseFlow(def steps, CredentialHelper credentialHelper, Closure verbRunner) {
+    ReleaseFlow(def steps,
+                CredentialHelper credentialHelper,
+                Closure verbRunner,
+                ApprovalHelper approvalHelper = null,
+                StageExecutor stageExecutor = null) {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.verbRunner = verbRunner
-        this.approvalHelper = new ApprovalHelper(steps)
-        this.stageExecutor = new StageExecutor(steps, credentialHelper)
+        this.approvalHelper = approvalHelper ?: new ApprovalHelper(steps)
+        this.stageExecutor = stageExecutor ?: new StageExecutor(steps, credentialHelper)
     }
 
     void runReleaseStages(List<Map> stages) {
