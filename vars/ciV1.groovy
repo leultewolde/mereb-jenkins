@@ -82,11 +82,11 @@ def call(Map args = [:]) {
         BuildStages buildStages = new BuildStages(this, verbRunner.&run, credentialHelper)
         DockerPipeline dockerPipeline = new DockerPipeline(this)
         ApprovalHelper releaseApprovalHelper = new ApprovalHelper(this)
-        StageExecutor releaseStageExecutor = new StageExecutor(this, credentialHelper)
-        ReleaseFlow releaseFlow = new ReleaseFlow(this, credentialHelper, verbRunner.&run, releaseApprovalHelper, releaseStageExecutor)
-        TerraformPipeline terraformPipeline = new TerraformPipeline(this, credentialHelper, pipelineHelper.&awaitApproval)
+        StageExecutor stageExecutor = new StageExecutor(this, credentialHelper)
+        ReleaseFlow releaseFlow = new ReleaseFlow(this, credentialHelper, verbRunner.&run, releaseApprovalHelper, stageExecutor)
+        TerraformPipeline terraformPipeline = new TerraformPipeline(this, credentialHelper, stageExecutor, pipelineHelper.&awaitApproval)
         DeployPipeline deployPipeline = new DeployPipeline(this, credentialHelper)
-        MicrofrontendPipeline microfrontendPipeline = new MicrofrontendPipeline(this, credentialHelper, pipelineHelper.&awaitApproval)
+        MicrofrontendPipeline microfrontendPipeline = new MicrofrontendPipeline(this, credentialHelper, pipelineHelper.&awaitApproval, stageExecutor)
         ReleaseOrchestrator releaseOrchestrator = new ReleaseOrchestrator(
             this,
             terraformPipeline,

@@ -2,6 +2,7 @@ package org.mereb.ci.terraform
 
 import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
+import org.mereb.ci.util.StageExecutor
 
 import static org.mereb.ci.util.PipelineUtils.mapToEnvList
 import static org.mereb.ci.util.PipelineUtils.shellEscape
@@ -13,11 +14,13 @@ class TerraformPipeline implements Serializable {
 
     private final def steps
     private final CredentialHelper credentialHelper
+    private final StageExecutor stageExecutor
     private final Closure approvalHandler
 
-    TerraformPipeline(def steps, CredentialHelper credentialHelper, Closure approvalHandler) {
+    TerraformPipeline(def steps, CredentialHelper credentialHelper, StageExecutor stageExecutor, Closure approvalHandler) {
         this.steps = steps
         this.credentialHelper = credentialHelper
+        this.stageExecutor = stageExecutor ?: new StageExecutor(steps, credentialHelper)
         this.approvalHandler = approvalHandler
     }
 
@@ -51,52 +54,48 @@ class TerraformPipeline implements Serializable {
                 return
             }
 
-            steps.stage("Terraform ${envCfg.displayName}") {
+            List<String> envList = []
+            envList.addAll(globalEnv)
+            envList.addAll(mapToEnvList(envCfg.env))
+
+            Map<String, String> backend = [:]
+            backend.putAll(globalBackend ?: [:])
+            backend.putAll(envCfg.backend ?: [:])
+
+            List<Map> bindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
+            stageExecutor.run("Terraform ${envCfg.displayName}", envList, bindings) {
                 approvalHandler?.call(envCfg.approval as Map, "Apply Terraform for ${envCfg.displayName}?")
 
-                List<String> envList = []
-                envList.addAll(globalEnv)
-                envList.addAll(mapToEnvList(envCfg.env))
+                steps.dir(basePath) {
+                    Map<String, String> combinedVars = [:]
+                    combinedVars.putAll(envCfg.vars ?: [:])
+                    String kubeEnvVar = envCfg.kubeconfigEnv ?: 'KUBECONFIG'
+                    String kubePath = resolveEnvVar(kubeEnvVar)
+                    if (kubePath?.trim() && !combinedVars.containsKey('kubeconfig_path')) {
+                        combinedVars['kubeconfig_path'] = kubePath.trim()
+                    }
+                    if (envCfg.kubeContext && !combinedVars.containsKey('kube_context')) {
+                        combinedVars['kube_context'] = envCfg.kubeContext
+                    }
 
-                Map<String, String> backend = [:]
-                backend.putAll(globalBackend ?: [:])
-                backend.putAll(envCfg.backend ?: [:])
-
-                List<Map> bindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
-                Closure execute = {
-                    steps.dir(basePath) {
-                        Map<String, String> combinedVars = [:]
-                        combinedVars.putAll(envCfg.vars ?: [:])
-                        String kubeEnvVar = envCfg.kubeconfigEnv ?: 'KUBECONFIG'
-                        String kubePath = resolveEnvVar(kubeEnvVar)
-                        if (kubePath?.trim() && !combinedVars.containsKey('kubeconfig_path')) {
-                            combinedVars['kubeconfig_path'] = kubePath.trim()
-                        }
-                        if (envCfg.kubeContext && !combinedVars.containsKey('kube_context')) {
-                            combinedVars['kube_context'] = envCfg.kubeContext
-                        }
-
-                        Closure commands = {
-                            if (!envList.isEmpty()) {
-                                steps.withEnv(envList) {
-                                    runTerraformCommands(binary, tfCfg, envCfg, backend, combinedVars)
-                                }
-                            } else {
+                    Closure commands = {
+                        if (!envList.isEmpty()) {
+                            steps.withEnv(envList) {
                                 runTerraformCommands(binary, tfCfg, envCfg, backend, combinedVars)
                             }
-                        }
-                        String envPath = envCfg.path ?: '.'
-                        if (envPath && envPath != '.' && envPath != './') {
-                            steps.dir(envPath) {
-                                commands()
-                            }
                         } else {
-                            commands()
+                            runTerraformCommands(binary, tfCfg, envCfg, backend, combinedVars)
                         }
                     }
+                    String envPath = envCfg.path ?: '.'
+                    if (envPath && envPath != '.' && envPath != './') {
+                        steps.dir(envPath) {
+                            commands()
+                        }
+                    } else {
+                        commands()
+                    }
                 }
-
-                credentialHelper.withOptionalCredentials(bindings, execute)
             }
 
             Map smoke = envCfg.smoke ?: [:]

@@ -2,6 +2,7 @@ package org.mereb.ci.mfe
 
 import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
+import org.mereb.ci.util.StageExecutor
 
 import static org.mereb.ci.util.PipelineUtils.mapToEnvList
 import static org.mereb.ci.util.PipelineUtils.shellEscape
@@ -14,11 +15,13 @@ class MicrofrontendPipeline implements Serializable {
     private final def steps
     private final CredentialHelper credentialHelper
     private final Closure approvalHandler
+    private final StageExecutor stageExecutor
 
-    MicrofrontendPipeline(def steps, CredentialHelper credentialHelper, Closure approvalHandler) {
+    MicrofrontendPipeline(def steps, CredentialHelper credentialHelper, Closure approvalHandler, StageExecutor stageExecutor = null) {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.approvalHandler = approvalHandler
+        this.stageExecutor = stageExecutor ?: new StageExecutor(steps, credentialHelper)
     }
 
     void run(Map cfg, Map state, Closure tagCallback = null, Closure releaseCallback = null, Map releaseCfg = null) {
@@ -101,20 +104,12 @@ class MicrofrontendPipeline implements Serializable {
                 }
             }
 
-            steps.stage("MFE ${stageLabel} Deploy") {
-                credentialHelper.withOptionalCredentials(bindings) {
-                    steps.withEnv(envList) {
-                        steps.sh(script: publishScript(remoteName, manifestFlag, distDir, manifestScript, envCfg, version), label: "Publish ${stageLabel}")
-                    }
-                }
+            stageExecutor.run("MFE ${stageLabel} Deploy", envList, bindings) {
+                steps.sh(script: publishScript(remoteName, manifestFlag, distDir, manifestScript, envCfg, version), label: "Publish ${stageLabel}")
             }
 
-            steps.stage("MFE ${stageLabel} Test") {
-                credentialHelper.withOptionalCredentials(bindings) {
-                    steps.withEnv(envList) {
-                        steps.sh(script: verifyScript(remoteName, manifestEntry, envCfg, version, checkScript), label: "Verify ${stageLabel}")
-                    }
-                }
+            stageExecutor.run("MFE ${stageLabel} Test", envList, bindings) {
+                steps.sh(script: verifyScript(remoteName, manifestEntry, envCfg, version, checkScript), label: "Verify ${stageLabel}")
             }
 
             if (tagCallback && envLower == 'stg') {
