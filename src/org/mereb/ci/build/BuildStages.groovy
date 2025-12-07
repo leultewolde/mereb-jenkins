@@ -1,6 +1,7 @@
 package org.mereb.ci.build
 
 import org.mereb.ci.credentials.CredentialHelper
+import org.mereb.ci.util.StageExecutor
 
 import static org.mereb.ci.util.PipelineUtils.mapToEnvList
 
@@ -12,11 +13,13 @@ class BuildStages implements Serializable {
     private final def steps
     private final Closure verbRunner
     private final CredentialHelper credentialHelper
+    private final StageExecutor stageExecutor
 
     BuildStages(def steps, Closure verbRunner, CredentialHelper credentialHelper) {
         this.steps = steps
         this.verbRunner = verbRunner
         this.credentialHelper = credentialHelper
+        this.stageExecutor = new StageExecutor(steps, credentialHelper)
     }
 
     void runBuildStages(List<Map> stages) {
@@ -26,25 +29,17 @@ class BuildStages implements Serializable {
         }
         stages.each { Map stageCfg ->
             String name = stageCfg.name ?: 'Build'
-            steps.stage(name) {
-                List<String> envList = mapToEnvList(stageCfg.env instanceof Map ? stageCfg.env : [:])
-                List<Map> bindings = credentialHelper.bindingsFor(stageCfg)
+            List<String> envList = mapToEnvList(stageCfg.env instanceof Map ? stageCfg.env : [:])
+            List<Map> bindings = credentialHelper.bindingsFor(stageCfg)
 
-                Closure execute = {
-                    if (stageCfg.verb) {
-                        verbRunner.call(stageCfg.verb as String)
-                    } else if (stageCfg.sh) {
-                        steps.sh stageCfg.sh as String
-                    } else {
-                        steps.echo "Stage '${name}' has no action."
-                    }
+            stageExecutor.run(name, envList, bindings) {
+                if (stageCfg.verb) {
+                    verbRunner.call(stageCfg.verb as String)
+                } else if (stageCfg.sh) {
+                    steps.sh stageCfg.sh as String
+                } else {
+                    steps.echo "Stage '${name}' has no action."
                 }
-
-                Closure wrapped = execute
-                if (envList && !envList.isEmpty()) {
-                    wrapped = { steps.withEnv(envList) { execute() } }
-                }
-                credentialHelper.withOptionalCredentials(bindings, wrapped)
             }
         }
     }

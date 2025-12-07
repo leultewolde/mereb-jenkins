@@ -3,6 +3,7 @@ package org.mereb.ci.deploy
 import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.util.ApprovalHelper
+import org.mereb.ci.util.VaultCredentialHelper
 
 /**
  * Orchestrates Helm-based environment deployments so ciV1 stays declarative.
@@ -13,12 +14,14 @@ class DeployPipeline implements Serializable {
     private final CredentialHelper credentialHelper
     private final ValuesTemplateRenderer templateRenderer
     private final ApprovalHelper approvalHelper
+    private final VaultCredentialHelper vaultHelper
 
     DeployPipeline(def steps, CredentialHelper credentialHelper, ValuesTemplateRenderer templateRenderer = null) {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.templateRenderer = templateRenderer ?: new ValuesTemplateRenderer(steps)
         this.approvalHelper = new ApprovalHelper(steps)
+        this.vaultHelper = new VaultCredentialHelper(steps, credentialHelper)
     }
 
     void run(Map cfg, Map state, Closure afterEnvCallback = null) {
@@ -49,8 +52,9 @@ class DeployPipeline implements Serializable {
                 requestDeploymentApproval(envCfg)
             }
 
-            String vaultAddress = resolveVaultAddress(envCfg)
-            List<Map> deployBindings = credentialHelper.bindingsFor(envCfg, vaultAddress)
+            VaultCredentialHelper.VaultContext vaultContext = vaultHelper.prepare(envCfg)
+            List<Map> deployBindings = vaultContext.bindings
+            String vaultAddress = vaultContext.address
             List<String> valuesFiles = determineValuesFiles(envName, envCfg)
             List<String> renderedTemplates = []
             Closure renderTemplates = {
@@ -59,11 +63,7 @@ class DeployPipeline implements Serializable {
             Closure renderWithCredentials = {
                 credentialHelper.withOptionalCredentials(deployBindings, renderTemplates)
             }
-            if (vaultAddress) {
-                steps.withEnv(["VAULT_ADDR=${vaultAddress}"], renderWithCredentials)
-            } else {
-                renderWithCredentials()
-            }
+            vaultHelper.withVaultEnv(vaultAddress, renderWithCredentials)
             valuesFiles.addAll(renderedTemplates)
 
             steps.stage("Deploy ${envCfg.displayName}") {
@@ -86,7 +86,7 @@ class DeployPipeline implements Serializable {
                 credentialHelper.withOptionalCredentials(deployBindings, runDeploy)
             }
 
-            runSmoke(envCfg)
+            runSmoke(envCfg, vaultContext)
 
             afterEnvCallback?.call(envName)
 
@@ -144,7 +144,7 @@ class DeployPipeline implements Serializable {
         return merged
     }
 
-    private void runSmoke(Map envCfg) {
+    private void runSmoke(Map envCfg, VaultCredentialHelper.VaultContext vaultContext) {
         Map smoke = envCfg.smoke ?: [:]
         if (!(smoke.url || smoke.script || smoke.command)) {
             return
@@ -153,7 +153,7 @@ class DeployPipeline implements Serializable {
             Map payload = [:]
             payload.putAll(smoke)
             payload.environment = envCfg.displayName
-            List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg, resolveVaultAddress(envCfg))
+            List<Map> smokeBindings = vaultContext.bindings
             Closure run = {
                 steps.runSmoke(payload)
             }
@@ -184,46 +184,4 @@ class DeployPipeline implements Serializable {
         }
     }
 
-    private String resolveVaultAddress(Map envCfg) {
-        String envAddr = (steps?.env?.VAULT_ADDR ?: '')?.toString()?.trim()
-        if (envAddr) {
-            String normalized = normalizeVaultAddress(envAddr)
-            if (normalized) {
-                return normalized
-            }
-        }
-        if (envCfg?.vault instanceof Map) {
-            String url = (envCfg.vault.url ?: envCfg.vault.baseUrl ?: '').toString().trim()
-            String normalized = normalizeVaultAddress(url)
-            if (normalized) {
-                return normalized
-            }
-        }
-        if (envCfg?.valuesTemplates instanceof List) {
-            for (Object entry : envCfg.valuesTemplates) {
-                if (!(entry instanceof Map)) {
-                    continue
-                }
-                Map templateCfg = entry as Map
-                Map vault = templateCfg.vault instanceof Map ? templateCfg.vault as Map : [:]
-                String url = (vault.url ?: vault.baseUrl ?: '').toString().trim()
-                String normalized = normalizeVaultAddress(url)
-                if (normalized) {
-                    return normalized
-                }
-            }
-        }
-        return null
-    }
-
-    private static String normalizeVaultAddress(String raw) {
-        if (!raw?.trim()) {
-            return null
-        }
-        String addr = raw.trim()
-        if (!addr.contains('://')) {
-            addr = "https://${addr}"
-        }
-        return addr.replaceAll(/\/+$/, '')
-    }
 }

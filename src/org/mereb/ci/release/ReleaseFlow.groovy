@@ -4,6 +4,7 @@ import groovy.json.JsonOutput
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.Helpers
 import org.mereb.ci.util.ApprovalHelper
+import org.mereb.ci.util.StageExecutor
 import org.mereb.ci.util.PipelineUtils
 
 import java.net.URI
@@ -21,12 +22,14 @@ class ReleaseFlow implements Serializable {
     private final CredentialHelper credentialHelper
     private final Closure verbRunner
     private final ApprovalHelper approvalHelper
+    private final StageExecutor stageExecutor
 
     ReleaseFlow(def steps, CredentialHelper credentialHelper, Closure verbRunner) {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.verbRunner = verbRunner
         this.approvalHelper = new ApprovalHelper(steps)
+        this.stageExecutor = new StageExecutor(steps, credentialHelper)
     }
 
     void runReleaseStages(List<Map> stages) {
@@ -45,28 +48,20 @@ class ReleaseFlow implements Serializable {
                 steps.echo "Release stage '${name}' skipped by condition '${whenCond}'"
                 return
             }
-            steps.stage(name) {
+            List<String> envList = mapToEnvList(stageCfg.env instanceof Map ? stageCfg.env : [:])
+            envList << "RELEASE_TAG=${effectiveTag}"
+            Map bindingSource = [credentials: stageCfg.credentials]
+            List<Map> bindings = credentialHelper.bindingsFor(bindingSource)
+
+            stageExecutor.run(name, envList, bindings) {
                 maybeRequestApproval(stageCfg.approval as Map, "Run '${name}'?")
-                List<String> envList = mapToEnvList(stageCfg.env instanceof Map ? stageCfg.env : [:])
-                envList << "RELEASE_TAG=${effectiveTag}"
-                Map bindingSource = [credentials: stageCfg.credentials]
-                List<Map> bindings = credentialHelper.bindingsFor(bindingSource)
-
-                Closure execute = {
-                    if (stageCfg.verb) {
-                        verbRunner.call(stageCfg.verb as String)
-                    } else if (stageCfg.sh) {
-                        steps.sh stageCfg.sh as String
-                    } else {
-                        steps.echo "Stage '${name}' has no action."
-                    }
+                if (stageCfg.verb) {
+                    verbRunner.call(stageCfg.verb as String)
+                } else if (stageCfg.sh) {
+                    steps.sh stageCfg.sh as String
+                } else {
+                    steps.echo "Stage '${name}' has no action."
                 }
-
-                Closure wrapped = execute
-                if (envList && !envList.isEmpty()) {
-                    wrapped = { steps.withEnv(envList) { execute() } }
-                }
-                credentialHelper.withOptionalCredentials(bindings, wrapped)
             }
         }
     }
