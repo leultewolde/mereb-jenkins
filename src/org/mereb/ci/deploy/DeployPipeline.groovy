@@ -4,7 +4,7 @@ import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.util.ApprovalHelper
 import org.mereb.ci.util.VaultCredentialHelper
-import org.mereb.ci.util.VaultCredentialHelper.VaultContext
+import org.mereb.ci.util.VaultContext
 
 /**
  * Orchestrates Helm-based environment deployments so ciV1 stays declarative.

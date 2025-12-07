@@ -1,6 +1,7 @@
 package org.mereb.ci.util
 
 import org.mereb.ci.credentials.CredentialHelper
+import org.mereb.ci.util.VaultContext
 
 /**
  * Wraps Vault-specific credential resolution so every caller picks the same VAULT_ADDR and bindings.
@@ -72,13 +73,4 @@ class VaultCredentialHelper implements Serializable {
         return addr.replaceAll(/\/+$/, '')
     }
 
-    static class VaultContext implements Serializable {
-        final String address
-        final List<Map> bindings
-
-        VaultContext(String address, List<Map> bindings) {
-            this.address = address
-            this.bindings = bindings ?: []
-        }
-    }
 }
