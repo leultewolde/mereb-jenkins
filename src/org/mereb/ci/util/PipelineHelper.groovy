@@ -1,14 +1,15 @@
 package org.mereb.ci.util
-
 /**
  * Wraps Jenkins step helpers so vars/ciV1.groovy can stay focused on orchestration.
  */
 class PipelineHelper implements Serializable {
 
     private final def steps
+    private final ApprovalHelper approvalHelper
 
     PipelineHelper(def steps) {
         this.steps = steps
+        this.approvalHelper = new ApprovalHelper(steps)
     }
 
     String locateConfig(String primary, String legacy) {
@@ -38,16 +39,7 @@ class PipelineHelper implements Serializable {
     }
 
     void awaitApproval(Map approval, String defaultMessage) {
-        if (!approval || approval.isEmpty()) {
-            return
-        }
-        String message = approval.message ?: defaultMessage
-        String ok = approval.ok ?: 'Approve'
-        if (approval.submitter) {
-            steps.input message: message, ok: ok, submitter: approval.submitter.toString()
-        } else {
-            steps.input message: message, ok: ok
-        }
+        approvalHelper.request(approval, defaultMessage)
     }
 
     void cleanupWorkspace(String workspace) {

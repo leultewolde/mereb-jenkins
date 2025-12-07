@@ -2,6 +2,7 @@ package org.mereb.ci.deploy
 
 import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
+import org.mereb.ci.util.ApprovalHelper
 
 /**
  * Orchestrates Helm-based environment deployments so ciV1 stays declarative.
@@ -11,11 +12,13 @@ class DeployPipeline implements Serializable {
     private final def steps
     private final CredentialHelper credentialHelper
     private final ValuesTemplateRenderer templateRenderer
+    private final ApprovalHelper approvalHelper
 
     DeployPipeline(def steps, CredentialHelper credentialHelper, ValuesTemplateRenderer templateRenderer = null) {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.templateRenderer = templateRenderer ?: new ValuesTemplateRenderer(steps)
+        this.approvalHelper = new ApprovalHelper(steps)
     }
 
     void run(Map cfg, Map state, Closure afterEnvCallback = null) {
@@ -159,25 +162,11 @@ class DeployPipeline implements Serializable {
     }
 
     private void requestDeploymentApproval(Map envCfg) {
-        Map approval = envCfg.approval ?: [:]
-        String message = approval.message ?: "Deploy ${envCfg.displayName ?: envCfg.name}?"
-        String ok = approval.ok ?: 'Deploy'
-        if (approval.submitter) {
-            steps.input message: message, ok: ok, submitter: approval.submitter.toString()
-        } else {
-            steps.input message: message, ok: ok
-        }
+        approvalHelper.request(envCfg.approval ?: [:], "Deploy ${envCfg.displayName ?: envCfg.name}?")
     }
 
     private void requestPromotion(Map envCfg, String current, String next) {
-        Map approval = envCfg.approval ?: [:]
-        String message = approval.message ?: "Promote ${current} deployment to ${next}?"
-        String ok = approval.ok ?: 'Promote'
-        if (approval.submitter) {
-            steps.input message: message, ok: ok, submitter: approval.submitter.toString()
-        } else {
-            steps.input message: message, ok: ok
-        }
+        approvalHelper.request(envCfg.approval ?: [:], "Promote ${current} deployment to ${next}?", 'Promote')
     }
 
     private void restartWorkloads(Map envCfg) {

@@ -3,6 +3,7 @@ package org.mereb.ci.release
 import groovy.json.JsonOutput
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.Helpers
+import org.mereb.ci.util.ApprovalHelper
 import org.mereb.ci.util.PipelineUtils
 
 import java.net.URI
@@ -19,11 +20,13 @@ class ReleaseFlow implements Serializable {
     private final def steps
     private final CredentialHelper credentialHelper
     private final Closure verbRunner
+    private final ApprovalHelper approvalHelper
 
     ReleaseFlow(def steps, CredentialHelper credentialHelper, Closure verbRunner) {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.verbRunner = verbRunner
+        this.approvalHelper = new ApprovalHelper(steps)
     }
 
     void runReleaseStages(List<Map> stages) {
@@ -126,31 +129,11 @@ class ReleaseFlow implements Serializable {
     }
 
     private void requestAutoTagApproval(Map approval) {
-        if (!approval || approval.isEmpty()) {
-            return
-        }
-        String message = approval.message ?: 'Create release tag?'
-        String ok = approval.ok ?: 'Approve'
-        Object submitter = approval.submitter
-        if (submitter) {
-            steps.input message: message, ok: ok, submitter: submitter.toString()
-        } else {
-            steps.input message: message, ok: ok
-        }
+        approvalHelper.request(approval, 'Create release tag?')
     }
 
     private void maybeRequestApproval(Map approval, String defaultMessage) {
-        if (!approval || approval.isEmpty()) {
-            return
-        }
-        String message = approval.message ?: defaultMessage
-        String ok = approval.ok ?: 'Approve'
-        Object submitter = approval.submitter
-        if (submitter) {
-            steps.input message: message, ok: ok, submitter: submitter.toString()
-        } else {
-            steps.input message: message, ok: ok
-        }
+        approvalHelper.request(approval, defaultMessage)
     }
 
     void publishRelease(Map releaseCfg, Map state) {
