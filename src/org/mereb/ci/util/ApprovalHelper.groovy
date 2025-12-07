@@ -43,7 +43,13 @@ class ApprovalHelper implements Serializable {
             return null
         }
         if (submitter instanceof Collection) {
-            return submitter.findAll { it }*.toString().join(',')
+            List<String> entries = []
+            submitter.each { Object entry ->
+                if (entry != null && entry.toString().trim()) {
+                    entries << entry.toString()
+                }
+            }
+            return entries.join(',')
         }
         return submitter.toString()
     }
