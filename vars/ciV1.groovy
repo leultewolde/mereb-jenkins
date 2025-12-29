@@ -79,21 +79,29 @@ def call(Map args = [:]) {
         final Map<String, String> state = pipelineState.state
         CredentialHelper credentialHelper = new CredentialHelper(this)
         VerbRunner verbRunner = new VerbRunner(this)
-        BuildStages buildStages = new BuildStages(this, verbRunner.&run, credentialHelper)
+        Closure runVerb = { String spec -> verbRunner.run(spec) }
+        BuildStages buildStages = new BuildStages(this, runVerb, credentialHelper)
         DockerPipeline dockerPipeline = new DockerPipeline(this)
         ApprovalHelper releaseApprovalHelper = new ApprovalHelper(this)
         StageExecutor stageExecutor = new StageExecutor(this, credentialHelper)
-        ReleaseFlow releaseFlow = new ReleaseFlow(this, credentialHelper, verbRunner.&run, releaseApprovalHelper, stageExecutor)
-        TerraformPipeline terraformPipeline = new TerraformPipeline(this, credentialHelper, stageExecutor, pipelineHelper.&awaitApproval)
+        Closure approvalHandler = { Map approvalCfg, String message -> pipelineHelper.awaitApproval(approvalCfg, message) }
+        ReleaseFlow releaseFlow = new ReleaseFlow(this, credentialHelper, runVerb, releaseApprovalHelper, stageExecutor)
+        TerraformPipeline terraformPipeline = new TerraformPipeline(this, credentialHelper, stageExecutor, approvalHandler)
         DeployPipeline deployPipeline = new DeployPipeline(this, credentialHelper)
-        MicrofrontendPipeline microfrontendPipeline = new MicrofrontendPipeline(this, credentialHelper, pipelineHelper.&awaitApproval, stageExecutor)
+        MicrofrontendPipeline microfrontendPipeline = new MicrofrontendPipeline(this, credentialHelper, approvalHandler, stageExecutor)
+        Closure handleRelease = { Map releaseCfg, Map currentState -> releaseFlow.handleRelease(releaseCfg, currentState) }
+        Closure runMicrofrontends = { Map mfeCfg, Map mfeState, Closure tagCallback = null, Closure releaseCallback = null, Map releaseCfg = null ->
+            microfrontendPipeline.run(mfeCfg, mfeState, tagCallback, releaseCallback, releaseCfg)
+        }
+        Closure runReleaseStages = { List<Map> stages -> releaseFlow.runReleaseStages(stages) }
+        Closure publishRelease = { Map releaseCfg, Map releaseState -> releaseFlow.publishRelease(releaseCfg, releaseState) }
         ReleaseOrchestrator releaseOrchestrator = new ReleaseOrchestrator(
             this,
             terraformPipeline,
-            releaseFlow.&handleRelease,
-            microfrontendPipeline.&run,
-            releaseFlow.&runReleaseStages,
-            releaseFlow.&publishRelease
+            handleRelease,
+            runMicrofrontends,
+            runReleaseStages,
+            publishRelease
         )
         List<String> exportedEnv = pipelineState.exportedEnv
 
