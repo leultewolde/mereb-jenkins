@@ -5,6 +5,7 @@ import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.util.StageExecutor
 
 import static org.mereb.ci.util.PipelineUtils.mapToEnvList
+import static org.mereb.ci.util.PipelineUtils.resolveEnvVar
 import static org.mereb.ci.util.PipelineUtils.shellEscape
 
 /**
@@ -70,7 +71,7 @@ class TerraformPipeline implements Serializable {
                     Map<String, String> combinedVars = [:]
                     combinedVars.putAll(envCfg.vars ?: [:])
                     String kubeEnvVar = envCfg.kubeconfigEnv ?: 'KUBECONFIG'
-                    String kubePath = resolveEnvVar(kubeEnvVar)
+                    String kubePath = resolveEnvVar(steps, kubeEnvVar)
                     if (kubePath?.trim() && !combinedVars.containsKey('kubeconfig_path')) {
                         combinedVars['kubeconfig_path'] = kubePath.trim()
                     }
@@ -302,24 +303,5 @@ class TerraformPipeline implements Serializable {
         }
 
         return [os: osLabel, arch: archLabel]
-    }
-
-    private String resolveEnvVar(String name) {
-        if (!name?.trim()) {
-            return ''
-        }
-        String trimmed = name.trim()
-        if (!(trimmed ==~ /^[A-Za-z_][A-Za-z0-9_]*$/)) {
-            steps.echo "Invalid environment variable name '${trimmed}'; skipping lookup."
-            return ''
-        }
-        StringBuilder script = new StringBuilder()
-        script.append('#!/bin/sh\n')
-        script.append('set +x\n')
-        script.append('if [ -z "${').append(trimmed).append('+x}" ]; then\n')
-        script.append('  exit 0\n')
-        script.append('fi\n')
-        script.append('printf \'%s\' "${').append(trimmed).append('}"\n')
-        return steps.sh(script: script.toString(), returnStdout: true).trim()
     }
 }

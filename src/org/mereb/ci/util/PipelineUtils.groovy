@@ -95,4 +95,23 @@ class PipelineUtils implements Serializable {
         }
         return "'${s.replace("'", "'\"'\"'")}'"
     }
+
+    static String resolveEnvVar(def steps, String name) {
+        if (!name?.trim()) {
+            return ''
+        }
+        String trimmed = name.trim()
+        if (!(trimmed ==~ /^[A-Za-z_][A-Za-z0-9_]*$/)) {
+            steps.echo "Invalid environment variable name '${trimmed}'; skipping lookup."
+            return ''
+        }
+        StringBuilder script = new StringBuilder()
+        script.append('#!/bin/sh\n')
+        script.append('set +x\n')
+        script.append('if [ -z "${').append(trimmed).append('+x}" ]; then\n')
+        script.append('  exit 0\n')
+        script.append('fi\n')
+        script.append('printf \'%s\' "${').append(trimmed).append('}"\n')
+        return steps.sh(script: script.toString(), returnStdout: true).trim()
+    }
 }

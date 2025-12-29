@@ -11,6 +11,7 @@ import java.net.URI
 import java.net.URLEncoder
 
 import static org.mereb.ci.util.PipelineUtils.mapToEnvList
+import static org.mereb.ci.util.PipelineUtils.resolveEnvVar
 import static org.mereb.ci.util.PipelineUtils.shellEscape
 
 /**
@@ -394,7 +395,7 @@ echo "Published GitHub release ${TAG} to ${REPO}"
                 String tokenUser = cred.tokenUser ?: 'x-access-token'
                 steps.withCredentials([steps.string(credentialsId: cred.id, variable: tokenEnv)]) {
                     if (hasRemote && originalUrl) {
-                        String tokenVal = resolveEnvVar(tokenEnv)
+                        String tokenVal = resolveEnvVar(steps, tokenEnv)
                         String updated = injectCredentialsIntoUrl(originalUrl, tokenUser, tokenVal ?: '')
                         steps.withEnv(["REMOTE=${remote}".toString(), "URL=${updated}".toString()]) {
                             steps.sh 'git remote set-url "$REMOTE" "$URL"'
@@ -412,8 +413,8 @@ echo "Published GitHub release ${TAG} to ${REPO}"
                 String passEnv = cred.passwordEnv ?: 'GIT_PASSWORD'
                 steps.withCredentials([steps.usernamePassword(credentialsId: cred.id, usernameVariable: userEnv, passwordVariable: passEnv)]) {
                     if (hasRemote && originalUrl) {
-                        String userVal = resolveEnvVar(userEnv) ?: ''
-                        String passVal = resolveEnvVar(passEnv) ?: ''
+                        String userVal = resolveEnvVar(steps, userEnv) ?: ''
+                        String passVal = resolveEnvVar(steps, passEnv) ?: ''
                         String updated = injectCredentialsIntoUrl(originalUrl, userVal, passVal)
                         steps.withEnv(["REMOTE=${remote}".toString(), "URL=${updated}".toString()]) {
                             steps.sh 'git remote set-url "$REMOTE" "$URL"'
@@ -518,22 +519,4 @@ echo "Published GitHub release ${TAG} to ${REPO}"
         return result
     }
 
-    private String resolveEnvVar(String name) {
-        if (!name?.trim()) {
-            return ''
-        }
-        String trimmed = name.trim()
-        if (!(trimmed ==~ /^[A-Za-z_][A-Za-z0-9_]*$/)) {
-            steps.echo "Invalid environment variable name '${trimmed}'; skipping lookup."
-            return ''
-        }
-        StringBuilder script = new StringBuilder()
-        script.append('#!/bin/sh\n')
-        script.append('set +x\n')
-        script.append('if [ -z "${').append(trimmed).append('+x}" ]; then\n')
-        script.append('  exit 0\n')
-        script.append('fi\n')
-        script.append('printf \'%s\' "${').append(trimmed).append('}"\n')
-        return steps.sh(script: script.toString(), returnStdout: true).trim()
-    }
 }
