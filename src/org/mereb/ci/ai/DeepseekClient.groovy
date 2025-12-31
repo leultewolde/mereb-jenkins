@@ -61,9 +61,9 @@ class DeepseekClient extends AiClient {
             'set -euo pipefail',
             'set +x',
             'PAYLOAD_FILE="$(mktemp)"',
-            "printf %s ${shellEscape(payload)} > \"\$PAYLOAD_FILE\"",
-            "curl -sS --max-time ${timeout} -H \"Content-Type: application/json\" -H \"Authorization: Bearer ${'$'}${tokenVar}\" \\",
-            "  -d @\"\\$PAYLOAD_FILE\" ${shellEscape(endpoint)}"
+            'printf %s ' + shellEscape(payload) + ' > "$PAYLOAD_FILE"',
+            'curl -sS --max-time ' + timeout + ' -H "Content-Type: application/json" -H "Authorization: Bearer $' + tokenVar + '" \\',
+            '  -d @"$PAYLOAD_FILE" ' + shellEscape(endpoint)
         ].join('\n')
 
         String response = ''
