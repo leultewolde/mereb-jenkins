@@ -197,6 +197,27 @@ class ReleaseFlow implements Serializable {
         }
     }
 
+    void cleanupAutoTag(Map releaseCfg) {
+        String tag = (steps.env.AUTO_TAG_CREATED ?: '').trim()
+        if (!tag) {
+            return
+        }
+        Map autoTagCfg = [:]
+        if (releaseCfg?.autoTag instanceof Map) {
+            autoTagCfg.putAll(releaseCfg.autoTag as Map)
+        } else if (releaseCfg instanceof Map) {
+            autoTagCfg.putAll(releaseCfg as Map)
+        }
+        String remote = (steps.env.AUTO_TAG_REMOTE ?: autoTagCfg.remote ?: 'origin').toString()
+        autoTagCfg.remote = remote
+
+        steps.echo "Pipeline failed; deleting auto-created tag ${tag}"
+        withRepoCredential(autoTagCfg) {
+            steps.sh "git push ${shellEscape(remote)} :${shellEscape(tag)} || true"
+        }
+        steps.sh "git tag -d ${shellEscape(tag)} || true"
+    }
+
     private String basicReleaseScript(String tag, String repo, String checkUrl, String apiUrl, String payloadJson, String userEnv, String passEnv) {
         String userRef = '$' + "{${userEnv}}"
         String passRef = '$' + "{${passEnv}}"
