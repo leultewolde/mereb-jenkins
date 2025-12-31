@@ -125,7 +125,6 @@ def call(Map args = [:]) {
                 def aiSuggestion = aiClient.suggest([state: state, config: cfg, env: env])
                 if (aiSuggestion?.hasData()) {
                     echo "AI: suggestion received (bumpTypes=${aiSuggestion.bumpTypes?.keySet() ?: 'none'}, hasChangeset=${aiSuggestion.changeset?.trim() ? 'yes' : 'no'})"
-                    echo "AI: Change Set: ${aiSuggestion.changeset?.trim()}"
                     if (aiSuggestion.changeset?.trim()) {
                         sh 'mkdir -p .ci'
                         writeFile file: '.ci/ai-changeset.md', text: aiSuggestion.changeset

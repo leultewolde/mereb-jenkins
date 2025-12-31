@@ -173,14 +173,22 @@ class ReleaseFlow implements Serializable {
             generate_release_notes : githubCfg.containsKey('generateReleaseNotes') ? githubCfg.generateReleaseNotes : true
         ]
         String aiChangeset = (steps.env.AI_CHANGESET ?: '').trim()
-        if (aiChangeset) {
+        String changelogLink = changelogLink(repo, tag)
+        if (aiChangeset || changelogLink) {
             String merged = payload.body ?: ''
+            List<String> parts = []
             if (merged?.trim()) {
-                merged = "${merged.trim()}\n\n${aiChangeset}"
-            } else {
-                merged = aiChangeset
+                parts << merged.trim()
             }
-            payload.body = merged
+            if (aiChangeset) {
+                parts << aiChangeset
+                payload.generate_release_notes = false
+                steps.echo 'AI: injecting changeset into GitHub release body and disabling auto-generated notes'
+            }
+            if (changelogLink) {
+                parts << changelogLink
+            }
+            payload.body = parts.join("\n\n")
         }
         if (!payload.body?.trim()) {
             payload.remove('body')
@@ -556,6 +564,31 @@ echo "Published GitHub release ${TAG} to ${REPO}"
             result = result.replace("{{${k}}}", v ?: '')
         }
         return result
+    }
+
+    private String changelogLink(String repo, String tag) {
+        if (!repo?.trim() || !tag?.trim()) {
+            return ''
+        }
+        String previous = ''
+        try {
+            previous = steps.sh(
+                script: "git tag --list '${shellEscape(tag[0..0])}*' --sort=-version:refname | grep -v '^${shellEscape(tag)}\$' | head -n1",
+                returnStdout: true
+            ).trim()
+            if (!previous) {
+                previous = steps.sh(
+                    script: "git tag --list --sort=-version:refname | grep -v '^${shellEscape(tag)}\$' | head -n1",
+                    returnStdout: true
+                ).trim()
+            }
+        } catch (Exception ignored) {
+            // best effort
+        }
+        if (!previous) {
+            return "**Full Changelog**: https://github.com/${repo}/releases/tag/${tag}"
+        }
+        return "**Full Changelog**: https://github.com/${repo}/compare/${previous}...${tag}"
     }
 
     private String determineAiBump() {
