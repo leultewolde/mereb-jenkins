@@ -121,8 +121,10 @@ def call(Map args = [:]) {
                 buildStages.runBuildStages(cfg.buildStages)
                 buildStages.runMatrix(cfg.matrix)
 
+                echo "AI: starting suggestion fetch (provider=${(cfg.ai?.provider ?: 'none')})"
                 def aiSuggestion = aiClient.suggest([state: state, config: cfg, env: env])
                 if (aiSuggestion?.hasData()) {
+                    echo "AI: suggestion received (bumpTypes=${aiSuggestion.bumpTypes?.keySet() ?: 'none'}, hasChangeset=${aiSuggestion.changeset?.trim() ? 'yes' : 'no'})"
                     if (aiSuggestion.changeset?.trim()) {
                         sh 'mkdir -p .ci'
                         writeFile file: '.ci/ai-changeset.md', text: aiSuggestion.changeset
@@ -132,6 +134,8 @@ def call(Map args = [:]) {
                     if (aiSuggestion.bumpTypes && !aiSuggestion.bumpTypes.isEmpty()) {
                         exportedEnv << "AI_BUMP_TYPES=${JsonOutput.toJson(aiSuggestion.bumpTypes)}"
                     }
+                } else {
+                    echo "AI: no suggestion returned"
                 }
 
                 dockerPipeline.run(cfg, state)
