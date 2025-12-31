@@ -336,7 +336,23 @@ echo "Published GitHub release ${TAG} to ${REPO}"
 
         String exists = steps.sh(script: "git rev-parse --quiet --verify refs/tags/${shellEscape(nextTag)} >/dev/null 2>&1 && echo yes || true", returnStdout: true).trim()
         if ('yes'.equalsIgnoreCase(exists)) {
-            steps.echo "Tag ${nextTag} already exists; skipping auto-tag."
+            steps.echo "Tag ${nextTag} already exists locally; skipping auto-tag."
+            steps.env.RELEASE_TAG = nextTag
+            steps.env.TAG_NAME = nextTag
+            return
+        }
+
+        String remoteTagSha = ''
+        try {
+            remoteTagSha = steps.sh(script: "git ls-remote ${shellEscape(remote)} refs/tags/${shellEscape(nextTag)} | awk '{print \$1}'", returnStdout: true).trim()
+        } catch (Exception ignored) {
+            // best-effort
+        }
+        if (remoteTagSha) {
+            steps.echo "Tag ${nextTag} already exists on remote (${remoteTagSha}); reusing."
+            steps.sh "git fetch --tags --force ${shellEscape(remote)} refs/tags/${shellEscape(nextTag)}:refs/tags/${shellEscape(nextTag)} || true"
+            steps.env.RELEASE_TAG = nextTag
+            steps.env.TAG_NAME = nextTag
             return
         }
 
@@ -350,8 +366,20 @@ echo "Published GitHub release ${TAG} to ${REPO}"
         }
 
         if (push) {
+            int status = 0
             withRepoCredential(autoTag) {
-                steps.sh "git push ${shellEscape(remote)} ${shellEscape(nextTag)}"
+                status = steps.sh(script: "git push ${shellEscape(remote)} ${shellEscape(nextTag)}", returnStatus: true)
+            }
+            if (status != 0) {
+                String remoteShaAfter = ''
+                try {
+                    remoteShaAfter = steps.sh(script: "git ls-remote ${shellEscape(remote)} refs/tags/${shellEscape(nextTag)} | awk '{print \$1}'", returnStdout: true).trim()
+                } catch (Exception ignored) {}
+                if (remoteShaAfter) {
+                    steps.echo "Push failed but tag ${nextTag} exists on remote (${remoteShaAfter}); proceeding with existing tag."
+                } else {
+                    steps.error "Failed to push tag ${nextTag} to ${remote}; aborting release."
+                }
             }
         } else {
             steps.echo "Auto-tag push disabled; created local tag ${nextTag}"
