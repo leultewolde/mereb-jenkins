@@ -106,7 +106,7 @@ def call(Map args = [:]) {
             publishRelease
         )
         List<String> exportedEnv = pipelineState.exportedEnv
-        def aiClient = AiFactory.create(cfg.ai)
+        def aiClient = AiFactory.create(cfg.ai, this)
 
         try {
             if (cfg.requiresGradleHome) {

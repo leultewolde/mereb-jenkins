@@ -5,9 +5,11 @@ package org.mereb.ci.ai
  */
 class AiFactory implements Serializable {
 
-    static AiClient create(Map cfg = [:]) {
+    static AiClient create(Map cfg = [:], def steps = null) {
         String provider = (cfg?.provider ?: 'none').toString().toLowerCase()
         switch (provider) {
+            case 'deepseek':
+                return new DeepseekClient(steps, cfg)
             default:
                 return new NullAiClient()
         }

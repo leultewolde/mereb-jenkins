@@ -45,6 +45,17 @@ The shared library includes a minimal AI abstraction so future releases can auto
    ```
 5. **Use credentials** inside the client via `steps.withCredentials(...)` to set `Authorization` headers for HTTP calls. Keep timeouts short to avoid blocking the pipeline.
 
+### Deepseek client
+A built-in Deepseek client is available (OpenAI-compatible API):
+```yaml
+ai:
+  provider: deepseek
+  model: deepseek-chat
+  credentialId: deepseek-api-key # Jenkins string credential
+  endpoint: https://api.deepseek.com/v1/chat/completions
+```
+If `credentialId` is empty or missing, it no-ops.
+
 ## Runtime behavior
 - ciV1 invokes `aiClient.suggest(...)` before Docker/release steps.
 - If the suggestion contains data, it writes `.ci/ai-changeset.md` and exports:
