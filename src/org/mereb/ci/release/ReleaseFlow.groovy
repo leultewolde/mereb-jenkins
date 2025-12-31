@@ -173,6 +173,19 @@ class ReleaseFlow implements Serializable {
             generate_release_notes : githubCfg.containsKey('generateReleaseNotes') ? githubCfg.generateReleaseNotes : true
         ]
         String aiChangeset = (steps.env.AI_CHANGESET ?: '').trim()
+        if (!aiChangeset) {
+            String aiPath = (steps.env.AI_CHANGESET_PATH ?: '').trim()
+            if (aiPath) {
+                try {
+                    if (steps.fileExists(aiPath)) {
+                        aiChangeset = steps.readFile(aiPath)?.trim() ?: ''
+                        steps.echo "AI: loaded changeset from ${aiPath} (length=${aiChangeset.length()})"
+                    }
+                } catch (Exception e) {
+                    steps.echo "AI: failed to read changeset from ${aiPath}: ${e.message}"
+                }
+            }
+        }
         String changelogLink = changelogLink(repo, tag)
         if (aiChangeset || changelogLink) {
             String merged = payload.body ?: ''
@@ -187,6 +200,7 @@ class ReleaseFlow implements Serializable {
             }
             if (changelogLink && !parts.any { it?.contains(changelogLink) }) {
                 parts << changelogLink
+                payload.generate_release_notes = false
             }
             payload.body = parts.join("\n\n")
             steps.echo "Release body composed (first 300 chars): ${payload.body.take(300)}"
