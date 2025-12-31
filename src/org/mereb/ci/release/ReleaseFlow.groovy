@@ -152,6 +152,10 @@ class ReleaseFlow implements Serializable {
             steps.echo 'Release tag not available; skipping GitHub release.'
             return
         }
+        String remoteSha = readRemoteTagSha('origin', tag)
+        if (!remoteSha) {
+            steps.error "Release tag ${tag} not found on remote; refusing to create GitHub release."
+        }
         if (!Helpers.matchCondition(githubCfg.when as String, steps.env)) {
             steps.echo "GitHub release skipped by condition '${githubCfg.when}'"
             return
@@ -342,12 +346,7 @@ echo "Published GitHub release ${TAG} to ${REPO}"
             return
         }
 
-        String remoteTagSha = ''
-        try {
-            remoteTagSha = steps.sh(script: "git ls-remote ${shellEscape(remote)} refs/tags/${shellEscape(nextTag)} | awk '{print \$1}'", returnStdout: true).trim()
-        } catch (Exception ignored) {
-            // best-effort
-        }
+        String remoteTagSha = readRemoteTagSha(remote, nextTag)
         if (remoteTagSha) {
             steps.echo "Tag ${nextTag} already exists on remote (${remoteTagSha}); reusing."
             steps.sh "git fetch --tags --force ${shellEscape(remote)} refs/tags/${shellEscape(nextTag)}:refs/tags/${shellEscape(nextTag)} || true"
@@ -371,15 +370,18 @@ echo "Published GitHub release ${TAG} to ${REPO}"
                 status = steps.sh(script: "git push ${shellEscape(remote)} ${shellEscape(nextTag)}", returnStatus: true)
             }
             if (status != 0) {
-                String remoteShaAfter = ''
-                try {
-                    remoteShaAfter = steps.sh(script: "git ls-remote ${shellEscape(remote)} refs/tags/${shellEscape(nextTag)} | awk '{print \$1}'", returnStdout: true).trim()
-                } catch (Exception ignored) {}
+                String remoteShaAfter = readRemoteTagSha(remote, nextTag)
                 if (remoteShaAfter) {
                     steps.echo "Push failed but tag ${nextTag} exists on remote (${remoteShaAfter}); proceeding with existing tag."
                 } else {
                     steps.error "Failed to push tag ${nextTag} to ${remote}; aborting release."
                 }
+            }
+            String verifiedSha = readRemoteTagSha(remote, nextTag)
+            if (!verifiedSha) {
+                steps.error "Tag ${nextTag} not found on remote ${remote} after push; aborting release."
+            } else {
+                steps.echo "Verified tag ${nextTag} on remote (${verifiedSha})"
             }
         } else {
             steps.echo "Auto-tag push disabled; created local tag ${nextTag}"
@@ -632,6 +634,17 @@ echo "Published GitHub release ${TAG} to ${REPO}"
             return "**Full Changelog**: https://github.com/${repo}/releases/tag/${tag}"
         }
         return "**Full Changelog**: https://github.com/${repo}/compare/${previous}...${tag}"
+    }
+
+    private String readRemoteTagSha(String remote, String tag) {
+        try {
+            return steps.sh(
+                script: "git ls-remote ${shellEscape(remote)} refs/tags/${shellEscape(tag)} | awk '{print \$1}'",
+                returnStdout: true
+            ).trim()
+        } catch (Exception ignored) {
+            return ''
+        }
     }
 
     private String determineAiBump() {
