@@ -216,6 +216,7 @@ class ReleaseFlow implements Serializable {
         if (githubCfg.discussionCategory) {
             payload.discussion_category_name = githubCfg.discussionCategory
         }
+        boolean targetDraft = payload.draft as Boolean
 
         String payloadJson = JsonOutput.toJson(payload)
         String apiUrl = "${apiBase}/repos/${repo}/releases"
@@ -229,11 +230,11 @@ class ReleaseFlow implements Serializable {
             String userEnv = credential.usernameEnv ?: 'GITHUB_USERNAME'
             String passEnv = credential.passwordEnv ?: 'GITHUB_PASSWORD'
             bindings << steps.usernamePassword(credentialsId: credential.id, usernameVariable: userEnv, passwordVariable: passEnv)
-            script = basicReleaseScript(tag, repo, checkUrl, apiUrl, payloadJson, userEnv, passEnv)
+            script = basicReleaseScript(tag, repo, checkUrl, apiUrl, payloadJson, userEnv, passEnv, targetDraft)
         } else {
             String tokenEnv = credential.tokenEnv ?: 'GITHUB_TOKEN'
             bindings << steps.string(credentialsId: credential.id, variable: tokenEnv)
-            script = tokenReleaseScript(tag, repo, checkUrl, apiUrl, payloadJson, tokenEnv)
+            script = tokenReleaseScript(tag, repo, checkUrl, apiUrl, payloadJson, tokenEnv, targetDraft)
         }
 
         steps.withCredentials(bindings) {
@@ -262,7 +263,7 @@ class ReleaseFlow implements Serializable {
         steps.sh "git tag -d ${shellEscape(tag)} || true"
     }
 
-    private String basicReleaseScript(String tag, String repo, String checkUrl, String apiUrl, String payloadJson, String userEnv, String passEnv) {
+    private String basicReleaseScript(String tag, String repo, String checkUrl, String apiUrl, String payloadJson, String userEnv, String passEnv, boolean targetDraft) {
         String userRef = '$' + "{${userEnv}}"
         String passRef = '$' + "{${passEnv}}"
         String template = '''#!/usr/bin/env bash
@@ -270,43 +271,91 @@ set -euo pipefail
 set +x
 TAG=%s
 REPO=%s
+TARGET_DRAFT=%s
 if [ -z "%s" ] || [ -z "%s" ]; then
   echo "GitHub credentials unavailable; skipping release." >&2
   exit 1
 fi
 auth="%s:%s"
-CHECK_STATUS=$(curl -s -o /dev/null -w '%%{http_code}' -u "${auth}" -H "Accept: application/vnd.github+json" %s || true)
+TMP=$(mktemp)
+CHECK_STATUS=$(curl -s -o "${TMP}" -w '%%{http_code}' -u "${auth}" -H "Accept: application/vnd.github+json" %s || true)
 if [ "$CHECK_STATUS" = "200" ]; then
+  RELEASE_ID=""
+  RELEASE_DRAFT="false"
+  PARSE_OUT=$(python3 - <<'PY' "${TMP}" 2>/dev/null || true)
+import json, sys
+path = sys.argv[1]
+try:
+    data = json.load(open(path))
+    print(data.get("id", ""))
+    print("true" if data.get("draft") else "false")
+except Exception:
+    pass
+PY
+  RELEASE_ID=$(echo "${PARSE_OUT}" | sed -n '1p')
+  RELEASE_DRAFT=$(echo "${PARSE_OUT}" | sed -n '2p')
+  if [ "$RELEASE_ID" ] && [ "$RELEASE_DRAFT" = "true" ] && [ "$TARGET_DRAFT" = "false" ]; then
+    curl -sSf -X PATCH -u "${auth}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data %s %s/${RELEASE_ID} > /dev/null
+    echo "Published existing draft GitHub release ${TAG} to ${REPO}"
+    rm -f "${TMP}"
+    exit 0
+  fi
   echo "GitHub release for ${TAG} already exists; skipping."
+  rm -f "${TMP}"
   exit 0
 fi
+rm -f "${TMP}"
 curl -sSf -X POST -u "${auth}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data %s %s > /dev/null
 echo "Published GitHub release ${TAG} to ${REPO}"
 '''.stripIndent()
-        return String.format(template, tag, repo, userRef, passRef, userRef, passRef, shellEscape(checkUrl), shellEscape(payloadJson), shellEscape(apiUrl))
+        return String.format(template, tag, repo, targetDraft, userRef, passRef, userRef, passRef, shellEscape(checkUrl), shellEscape(payloadJson), shellEscape(apiUrl), shellEscape(payloadJson), shellEscape(apiUrl))
     }
 
-    private String tokenReleaseScript(String tag, String repo, String checkUrl, String apiUrl, String payloadJson, String tokenEnv) {
+    private String tokenReleaseScript(String tag, String repo, String checkUrl, String apiUrl, String payloadJson, String tokenEnv, boolean targetDraft) {
         String tokenRef = '$' + "{${tokenEnv}}"
         return '''#!/usr/bin/env bash
 set -euo pipefail
 set +x
 TAG=%s
 REPO=%s
+TARGET_DRAFT=%s
 if [ -z "%s" ]; then
   echo "GitHub token unavailable; skipping release." >&2
   exit 1
 fi
 auth_header="Authorization: Bearer %s"
-CHECK_STATUS=$(curl -s -o /dev/null -w '%%{http_code}' -H "${auth_header}" -H "Accept: application/vnd.github+json" %s || true)
+TMP=$(mktemp)
+CHECK_STATUS=$(curl -s -o "${TMP}" -w '%%{http_code}' -H "${auth_header}" -H "Accept: application/vnd.github+json" %s || true)
 if [ "$CHECK_STATUS" = "200" ]; then
+  RELEASE_ID=""
+  RELEASE_DRAFT="false"
+  PARSE_OUT=$(python3 - <<'PY' "${TMP}" 2>/dev/null || true)
+import json, sys
+path = sys.argv[1]
+try:
+    data = json.load(open(path))
+    print(data.get("id", ""))
+    print("true" if data.get("draft") else "false")
+except Exception:
+    pass
+PY
+  RELEASE_ID=$(echo "${PARSE_OUT}" | sed -n '1p')
+  RELEASE_DRAFT=$(echo "${PARSE_OUT}" | sed -n '2p')
+  if [ "$RELEASE_ID" ] && [ "$RELEASE_DRAFT" = "true" ] && [ "$TARGET_DRAFT" = "false" ]; then
+    curl -sSf -X PATCH -H "${auth_header}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data %s %s/${RELEASE_ID} > /dev/null
+    echo "Published existing draft GitHub release ${TAG} to ${REPO}"
+    rm -f "${TMP}"
+    exit 0
+  fi
   echo "GitHub release for ${TAG} already exists; skipping."
+  rm -f "${TMP}"
   exit 0
 fi
+rm -f "${TMP}"
 curl -sSf -X POST -H "${auth_header}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data %s %s > /dev/null
 echo "Published GitHub release ${TAG} to ${REPO}"
 ''' .stripIndent()
-        return String.format(script, tag, repo, tokenRef, tokenRef, shellEscape(checkUrl), shellEscape(payloadJson), shellEscape(apiUrl))
+        return String.format(script, tag, repo, targetDraft, tokenRef, tokenRef, shellEscape(checkUrl), shellEscape(payloadJson), shellEscape(apiUrl), shellEscape(payloadJson), shellEscape(apiUrl))
     }
 
     private void cleanWorkspaceForTag(Map autoTag) {
