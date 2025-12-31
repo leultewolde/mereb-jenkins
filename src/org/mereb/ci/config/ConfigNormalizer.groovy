@@ -1,7 +1,6 @@
 package org.mereb.ci.config
 
 import org.mereb.ci.build.PnpmPreset
-import java.util.ArrayList
 
 import static org.mereb.ci.util.PipelineUtils.toStringList
 import static org.mereb.ci.util.PipelineUtils.toStringMap
@@ -52,6 +51,7 @@ class ConfigNormalizer implements Serializable {
         cfg.terraform = normalizeTerraform(source.get('terraform'))
         cfg.release = normalizeRelease(source.get('release'))
         cfg.deploy = normalizeDeploy(source, defaultEnvOrder)
+        cfg.ai = mapCopy(source.get('ai'))
 
         return cfg
     }

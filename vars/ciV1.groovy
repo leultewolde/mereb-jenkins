@@ -14,6 +14,8 @@ import org.mereb.ci.util.ApprovalHelper
 import org.mereb.ci.util.PipelineHelper
 import org.mereb.ci.util.StageExecutor
 import org.mereb.ci.verbs.VerbRunner
+import org.mereb.ci.ai.AiFactory
+import groovy.json.JsonOutput
 
 import static org.mereb.ci.util.PipelineUtils.*
 import java.util.UUID
@@ -104,6 +106,7 @@ def call(Map args = [:]) {
             publishRelease
         )
         List<String> exportedEnv = pipelineState.exportedEnv
+        def aiClient = AiFactory.create(cfg.ai)
 
         try {
             if (cfg.requiresGradleHome) {
@@ -117,6 +120,19 @@ def call(Map args = [:]) {
 
                 buildStages.runBuildStages(cfg.buildStages)
                 buildStages.runMatrix(cfg.matrix)
+
+                def aiSuggestion = aiClient.suggest([state: state, config: cfg, env: env])
+                if (aiSuggestion?.hasData()) {
+                    if (aiSuggestion.changeset?.trim()) {
+                        sh 'mkdir -p .ci'
+                        writeFile file: '.ci/ai-changeset.md', text: aiSuggestion.changeset
+                        exportedEnv << "AI_CHANGESET_PATH=${ws}/.ci/ai-changeset.md"
+                        exportedEnv << "AI_CHANGESET=${aiSuggestion.changeset}"
+                    }
+                    if (aiSuggestion.bumpTypes && !aiSuggestion.bumpTypes.isEmpty()) {
+                        exportedEnv << "AI_BUMP_TYPES=${JsonOutput.toJson(aiSuggestion.bumpTypes)}"
+                    }
+                }
 
                 dockerPipeline.run(cfg, state)
 

@@ -1,6 +1,7 @@
 package org.mereb.ci.release
 
 import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.Helpers
 import org.mereb.ci.util.ApprovalHelper
@@ -114,6 +115,11 @@ class ReleaseFlow implements Serializable {
             }
 
             List<String> envVars = mapToEnvList(autoTag.env ?: [:])
+            String aiBump = determineAiBump()
+            if (aiBump) {
+                steps.echo "AI bump override detected: ${aiBump}"
+                autoTag.bump = aiBump
+            }
             def runTag = {
                 createAndPushTag(autoTag, state)
             }
@@ -166,6 +172,16 @@ class ReleaseFlow implements Serializable {
             prerelease             : githubCfg.prerelease ?: false,
             generate_release_notes : githubCfg.containsKey('generateReleaseNotes') ? githubCfg.generateReleaseNotes : true
         ]
+        String aiChangeset = (steps.env.AI_CHANGESET ?: '').trim()
+        if (aiChangeset) {
+            String merged = payload.body ?: ''
+            if (merged?.trim()) {
+                merged = "${merged.trim()}\n\n${aiChangeset}"
+            } else {
+                merged = aiChangeset
+            }
+            payload.body = merged
+        }
         if (!payload.body?.trim()) {
             payload.remove('body')
         }
@@ -540,6 +556,35 @@ echo "Published GitHub release ${TAG} to ${REPO}"
             result = result.replace("{{${k}}}", v ?: '')
         }
         return result
+    }
+
+    private String determineAiBump() {
+        String raw = (steps.env.AI_BUMP_TYPES ?: '').trim()
+        if (!raw) {
+            return null
+        }
+        Map bumpMap = [:]
+        try {
+            bumpMap = new JsonSlurper().parseText(raw) as Map
+        } catch (Exception e) {
+            steps.echo "Failed to parse AI_BUMP_TYPES: ${e.message}"
+            return null
+        }
+        if (!(bumpMap instanceof Map) || bumpMap.isEmpty()) {
+            return null
+        }
+        Map<String, Integer> priority = ['patch': 1, 'minor': 2, 'major': 3]
+        int max = 0
+        String selected = null
+        bumpMap.each { k, v ->
+            String candidate = v?.toString()?.toLowerCase()
+            int rank = priority.get(candidate) ?: 0
+            if (rank > max) {
+                max = rank
+                selected = candidate
+            }
+        }
+        return selected
     }
 
 }
