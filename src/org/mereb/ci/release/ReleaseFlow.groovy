@@ -183,12 +183,13 @@ class ReleaseFlow implements Serializable {
             if (aiChangeset) {
                 parts << aiChangeset
                 payload.generate_release_notes = false
-                steps.echo 'AI: injecting changeset into GitHub release body and disabling auto-generated notes'
+                steps.echo "AI: injecting changeset into GitHub release body (length=${aiChangeset.length()}) and disabling auto-generated notes"
             }
-            if (changelogLink) {
+            if (changelogLink && !parts.any { it?.contains(changelogLink) }) {
                 parts << changelogLink
             }
             payload.body = parts.join("\n\n")
+            steps.echo "Release body composed (first 300 chars): ${payload.body.take(300)}"
         }
         if (!payload.body?.trim()) {
             payload.remove('body')
