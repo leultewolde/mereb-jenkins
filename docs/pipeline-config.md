@@ -163,6 +163,25 @@ release:
 - `autoTag.afterEnvironment` gates tagging until a specific deploy environment finishes.
 - GitHub releases inherit credentials from `autoTag` when not explicitly provided.
 
+### Release Stage Helper: `pnpm.publish`
+Use the built-in verb instead of hand-written bash to publish npm packages:
+
+```yaml
+releaseStages:
+  - name: Publish package
+    when: branch=main & !pr
+    credentials:
+      - { id: npm-registry-token, type: string, env: NPM_TOKEN }
+    verb: "pnpm.publish packageDir=packages/app-feed build=true"
+```
+
+Defaults:
+- Uses `PACKAGE_DIR` or `.` when `packageDir` is omitted.
+- Reads `NPM_REGISTRY`/`NPM_ACCESS` (override with `registry`/`access`).
+- Sources `.ci/env.sh` when present (disable via `loadEnvFile=false`).
+- Verifies `RELEASE_TAG`/`TAG_NAME` matches `package.json` version unless `skipTagCheck=true`.
+- Runs `pnpm run build` when `build=true` (override with `buildCommand=...`).
+
 ## Credentials & Secrets
 - Add inline bindings per stage using `credentials:` blocks. Supported types: `string`, `file`, `usernamePassword`.
 - Helm repo auth should use `deploy.<env>.repoCredentials` to benefit from `CredentialHelper` masking + audit logging.

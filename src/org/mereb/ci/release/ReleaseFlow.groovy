@@ -299,6 +299,8 @@ echo "Published GitHub release ${TAG} to ${REPO}"
 
         steps.env.RELEASE_TAG = nextTag
         steps.env.TAG_NAME = nextTag
+        steps.env.AUTO_TAG_CREATED = nextTag
+        steps.env.AUTO_TAG_REMOTE = remote
         steps.echo "Created release tag ${nextTag}"
     }
 

@@ -1,5 +1,6 @@
 package org.mereb.ci.verbs
 
+import org.mereb.ci.release.NpmPublisher
 import static org.mereb.ci.util.PipelineUtils.shellEscape
 
 /**
@@ -25,6 +26,36 @@ class VerbRunner implements Serializable {
         }
         if (spec.startsWith('npm ')) {
             steps.sh "npm ${unquote(spec.substring(4).trim())}"
+            return
+        }
+        if (spec.startsWith('pnpm.publish') || spec.startsWith('npm.publish')) {
+            Map<String, String> kv = parseKVs(spec.substring(spec.indexOf('publish') + 'publish'.length()))
+            Map opts = [:]
+            if (kv.packageDir) {
+                opts.packageDir = kv.packageDir
+            }
+            if (kv.dir) {
+                opts.packageDir = kv.dir
+            }
+            if (kv.registry) {
+                opts.registry = kv.registry
+            }
+            if (kv.access) {
+                opts.access = kv.access
+            }
+            if (kv.build) {
+                opts.build = kv.build
+            }
+            if (kv.buildCommand) {
+                opts.buildCommand = kv.buildCommand
+            }
+            if (kv.envFile) {
+                opts.envFile = kv.envFile
+            }
+            if (kv.skipTagCheck) {
+                opts.skipTagCheck = kv.skipTagCheck
+            }
+            new NpmPublisher(steps).publish(opts)
             return
         }
 

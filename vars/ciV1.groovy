@@ -124,6 +124,15 @@ def call(Map args = [:]) {
                     deployPipeline.run(cfg, state, afterEnv)
                 }
             }
+        } catch (Throwable err) {
+            String createdTag = (env.AUTO_TAG_CREATED ?: '').trim()
+            if (createdTag) {
+                String remote = (env.AUTO_TAG_REMOTE ?: 'origin').trim()
+                echo "Pipeline failed; deleting auto-created tag ${createdTag}"
+                sh "git push ${shellEscape(remote)} :${shellEscape(createdTag)} || true"
+                sh "git tag -d ${shellEscape(createdTag)} || true"
+            }
+            throw err
         } finally {
             pipelineHelper.cleanupWorkspace(ws)
         }
