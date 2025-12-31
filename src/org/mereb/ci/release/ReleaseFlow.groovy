@@ -282,11 +282,11 @@ CHECK_STATUS=$(curl -s -o "${TMP}" -w '%%{http_code}' -u "${auth}" -H "Accept: a
 if [ "$CHECK_STATUS" = "200" ]; then
   RELEASE_ID=""
   RELEASE_DRAFT="false"
-  PARSE_OUT=$(python3 - <<'PY' "${TMP}" 2>/dev/null || true)
-import json, sys
-path = sys.argv[1]
+  PARSE_OUT=$(python3 - "${TMP}" <<'PY' 2>/dev/null || true)
+import json, sys, pathlib
+path = pathlib.Path(sys.argv[1])
 try:
-    data = json.load(open(path))
+    data = json.load(path.open())
     print(data.get("id", ""))
     print("true" if data.get("draft") else "false")
 except Exception:
@@ -329,11 +329,11 @@ CHECK_STATUS=$(curl -s -o "${TMP}" -w '%%{http_code}' -H "${auth_header}" -H "Ac
 if [ "$CHECK_STATUS" = "200" ]; then
   RELEASE_ID=""
   RELEASE_DRAFT="false"
-  PARSE_OUT=$(python3 - <<'PY' "${TMP}" 2>/dev/null || true)
-import json, sys
-path = sys.argv[1]
+  PARSE_OUT=$(python3 - "${TMP}" <<'PY' 2>/dev/null || true)
+import json, sys, pathlib
+path = pathlib.Path(sys.argv[1])
 try:
-    data = json.load(open(path))
+    data = json.load(path.open())
     print(data.get("id", ""))
     print("true" if data.get("draft") else "false")
 except Exception:
