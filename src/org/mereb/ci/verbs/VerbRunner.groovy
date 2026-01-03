@@ -128,10 +128,15 @@ class VerbRunner implements Serializable {
         if (!tail) {
             return map
         }
-        tail.trim().split(/\s+/).findAll { it.contains('=') }.each { String pair ->
+
+        String[] parts = tail.trim().split('\\s+')
+        for (String pair : parts) {
+            if (pair == null || !pair.contains('=')) {
+                continue
+            }
             int idx = pair.indexOf('=')
             if (idx <= 0) {
-                return
+                continue
             }
             String key = pair.substring(0, idx).trim()
             String value = pair.substring(idx + 1).trim()
