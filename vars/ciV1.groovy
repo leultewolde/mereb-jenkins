@@ -7,6 +7,7 @@ import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.deploy.DeployPipeline
 import org.mereb.ci.docker.DockerPipeline
 import org.mereb.ci.mfe.MicrofrontendPipeline
+import org.mereb.ci.Helpers
 import org.mereb.ci.release.ReleaseFlow
 import org.mereb.ci.release.ReleaseOrchestrator
 import org.mereb.ci.terraform.TerraformPipeline
@@ -138,14 +139,28 @@ def call(Map args = [:]) {
                     echo "AI: no suggestion returned"
                 }
 
+                Map autoTagCfg = (cfg.release?.autoTag instanceof Map) ? (cfg.release.autoTag as Map) : [:]
+                boolean autoTagEnabled = autoTagCfg.enabled as Boolean
+                String autoTagWhen = (autoTagCfg.when ?: '!pr').toString()
+                boolean shouldAutoTag = autoTagEnabled && Helpers.matchCondition(autoTagWhen, env) && !(env.TAG_NAME?.trim())
+
+                if (shouldAutoTag) {
+                    // Create the Git tag first so we push the image once with the final tag.
+                    releaseFlow.handleRelease(cfg.release, state)
+                    if (env.TAG_NAME?.trim()) {
+                        state.tagName = env.TAG_NAME.trim()
+                        state.imageTag = DockerPipeline.computeImageTag(cfg.image, state)
+                        state.imageRef = "${cfg.image.repository}:${state.imageTag}"
+                        // Prevent another auto-tag during release orchestration.
+                        cfg.release?.autoTag?.put('enabled', false)
+                    }
+                }
+
                 dockerPipeline.run(cfg, state)
 
                 releaseOrchestrator.execute(cfg, state) { Closure afterEnv ->
                     deployPipeline.run(cfg, state, afterEnv)
                 }
-
-                // If a release tag was created after the initial push, re-tag and push the image with the release tag.
-                dockerPipeline.pushReleaseTag(cfg, state)
             }
         } catch (Throwable err) {
             releaseFlow.cleanupAutoTag(cfg.release)

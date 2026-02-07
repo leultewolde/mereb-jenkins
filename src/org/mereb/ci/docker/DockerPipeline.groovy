@@ -18,7 +18,7 @@ class DockerPipeline implements Serializable {
         this.steps = steps
     }
 
-    void run(Map cfg, Map state) {
+    void run(Map cfg, Map state, boolean deferPush = false) {
         if (!(cfg.image.enabled as Boolean)) {
             steps.echo 'Docker stages disabled for this pipeline; skipping build/push/sign.'
             return
@@ -40,7 +40,9 @@ class DockerPipeline implements Serializable {
             }
         }
 
-        if (shouldPush(cfg)) {
+        if (deferPush) {
+            steps.echo 'Docker push/sign deferred until after release tagging.'
+        } else if (shouldPush(cfg)) {
             steps.stage('Docker Push') {
                 dockerPush(cfg, state)
             }
@@ -64,10 +66,10 @@ class DockerPipeline implements Serializable {
     }
 
     /**
-     * After an auto-created tag exists (RELEASE_TAG/TAG_NAME), push an additional image tag
-     * pointing at the already-built image.
+     * After an auto-created tag exists (RELEASE_TAG/TAG_NAME), push image tags pointing at the
+     * already-built image (release tag + any extraTags such as 'main').
      */
-    void pushReleaseTag(Map cfg, Map state) {
+    void pushReleaseTag(Map cfg, Map state, String sourceRefOverride = null) {
         String releaseTag = (steps.env.RELEASE_TAG ?: steps.env.TAG_NAME ?: '').toString().trim()
         if (!releaseTag) {
             return
@@ -82,11 +84,26 @@ class DockerPipeline implements Serializable {
             steps.echo 'Unable to determine repository to push release tag; skipping.'
             return
         }
-        String sourceRef = state.imageRef ?: "${pushRepository}:${state.imageTag}"
-        String releaseRef = "${pushRepository}:${releaseTag}"
-        steps.sh "docker tag ${shellEscape(sourceRef)} ${shellEscape(releaseRef)}"
-        steps.sh "docker push ${shellEscape(releaseRef)}"
-        steps.echo "Pushed release image tag ${releaseTag}"
+        String sourceRef = sourceRefOverride ?: state.imageRef ?: "${pushRepository}:${state.imageTag}"
+        Set<String> tagsToPush = new LinkedHashSet<>()
+        tagsToPush << releaseTag
+        (pushCfg.extraTags ?: []).each { rawTag ->
+            String rendered = renderTemplate(rawTag.toString(), templateContext(state))
+            if (rendered?.trim()) {
+                tagsToPush << rendered.trim()
+            }
+        }
+        tagsToPush.each { String tag ->
+            String ref = "${pushRepository}:${tag}"
+            steps.sh "docker tag ${shellEscape(sourceRef)} ${shellEscape(ref)}"
+            steps.sh "docker push ${shellEscape(ref)}"
+        }
+        if (cfg.image.verifyPull) {
+            String ref = "${pushRepository}:${releaseTag}"
+            steps.sh "docker rmi ${shellEscape(ref)} || true"
+            steps.sh "docker pull ${shellEscape(ref)}"
+        }
+        steps.echo "Pushed release image tag(s): ${tagsToPush.join(', ')}"
     }
 
     static String computeImageTag(Map imageCfg, Map state) {
@@ -177,14 +194,6 @@ class DockerPipeline implements Serializable {
             steps.sh "docker push ${shellEscape(ref)}"
         }
 
-        // If a release tag was created later in the pipeline (autoTag), also push it.
-        String releaseTag = (steps.env.RELEASE_TAG ?: steps.env.TAG_NAME ?: '').toString().trim()
-        if (releaseTag) {
-            String ref = "${pushRepository}:${releaseTag}"
-            steps.sh "docker tag ${shellEscape(sourceForExtraTags)} ${shellEscape(ref)}"
-            steps.sh "docker push ${shellEscape(ref)}"
-            steps.echo "Pushed release tag ${releaseTag} for image ${pushRepository}"
-        }
     }
 
     private void verifyPull(Map cfg, Map state) {
