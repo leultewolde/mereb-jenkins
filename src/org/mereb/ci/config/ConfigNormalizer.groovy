@@ -204,7 +204,8 @@ class ConfigNormalizer implements Serializable {
                     enabled  : false,
                     when     : (pushRaw.when ?: imageRaw.pushWhen ?: '!pr').toString(),
                     extraTags: toStringList(pushRaw.extraTags ?: imageRaw.extraTags)
-                ]
+                ],
+                verifyPull : asBool(imageRaw.get('verifyPull'))
             ]
         }
 
@@ -242,7 +243,8 @@ class ConfigNormalizer implements Serializable {
             buildFlags   : toStringList(imageRaw.get('buildFlags')),
             platforms    : toStringList(imageRaw.get('platforms')),
             tagStrategy  : asString(imageRaw.get('tagStrategy') ?: 'branch-sha'),
-            tagTemplate  : imageRaw.get('tagTemplate') ?: imageRaw.get('tag')
+            tagTemplate  : imageRaw.get('tagTemplate') ?: imageRaw.get('tag'),
+            verifyPull   : asBool(imageRaw.get('verifyPull'))
         ]
 
         imageCfg.push = [
@@ -895,5 +897,16 @@ class ConfigNormalizer implements Serializable {
 
     private static String asString(Object value) {
         return value == null ? '' : value.toString()
+    }
+
+    private static boolean asBool(Object value) {
+        if (value instanceof Boolean) {
+            return value as Boolean
+        }
+        if (value == null) {
+            return false
+        }
+        String normalized = value.toString().trim().toLowerCase()
+        return ['true', '1', 'yes', 'y', 'on'].contains(normalized)
     }
 }

@@ -44,8 +44,16 @@ class DockerPipeline implements Serializable {
             steps.stage('Docker Push') {
                 dockerPush(cfg, state)
             }
+            if (cfg.image.verifyPull) {
+                steps.stage('Verify Pull') {
+                    verifyPull(cfg, state)
+                }
+            }
         } else {
             steps.echo "Docker push skipped by condition '${cfg.image.push.when}'"
+            if (cfg.image.verifyPull) {
+                steps.echo 'Verify Pull skipped because push did not run.'
+            }
         }
 
         if (shouldSign(cfg)) {
@@ -142,6 +150,24 @@ class DockerPipeline implements Serializable {
             steps.sh "docker tag ${shellEscape(sourceForExtraTags)} ${shellEscape(ref)}"
             steps.sh "docker push ${shellEscape(ref)}"
         }
+    }
+
+    private void verifyPull(Map cfg, Map state) {
+        Map pushCfg = cfg.image.push
+        dockerLoginIfNeeded(cfg.image, pushCfg)
+        String pushRepository = resolvePushRepository(cfg.image, pushCfg)
+        if (!pushRepository?.trim()) {
+            throw new IllegalStateException('Unable to determine repository for pull verification.')
+        }
+
+        String pushRef = "${pushRepository}:${state.imageTag}"
+        // Remove local copies to ensure pull hits the registry.
+        steps.sh "docker rmi ${shellEscape(pushRef)} || true"
+        if (pushRef != state.imageRef) {
+            steps.sh "docker rmi ${shellEscape(state.imageRef)} || true"
+        }
+
+        steps.sh "docker pull ${shellEscape(pushRef)}"
     }
 
     private boolean shouldGenerateSbom(Map cfg) {
