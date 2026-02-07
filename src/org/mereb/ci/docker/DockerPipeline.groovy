@@ -63,6 +63,32 @@ class DockerPipeline implements Serializable {
         }
     }
 
+    /**
+     * After an auto-created tag exists (RELEASE_TAG/TAG_NAME), push an additional image tag
+     * pointing at the already-built image.
+     */
+    void pushReleaseTag(Map cfg, Map state) {
+        String releaseTag = (steps.env.RELEASE_TAG ?: steps.env.TAG_NAME ?: '').toString().trim()
+        if (!releaseTag) {
+            return
+        }
+        if (!(cfg.image.enabled as Boolean)) {
+            return
+        }
+        Map pushCfg = cfg.image.push
+        dockerLoginIfNeeded(cfg.image, pushCfg)
+        String pushRepository = resolvePushRepository(cfg.image, pushCfg)
+        if (!pushRepository?.trim()) {
+            steps.echo 'Unable to determine repository to push release tag; skipping.'
+            return
+        }
+        String sourceRef = state.imageRef ?: "${pushRepository}:${state.imageTag}"
+        String releaseRef = "${pushRepository}:${releaseTag}"
+        steps.sh "docker tag ${shellEscape(sourceRef)} ${shellEscape(releaseRef)}"
+        steps.sh "docker push ${shellEscape(releaseRef)}"
+        steps.echo "Pushed release image tag ${releaseTag}"
+    }
+
     static String computeImageTag(Map imageCfg, Map state) {
         Map ctx = templateContext(state)
         String candidate = null
@@ -149,6 +175,15 @@ class DockerPipeline implements Serializable {
             String ref = "${pushRepository}:${rendered}"
             steps.sh "docker tag ${shellEscape(sourceForExtraTags)} ${shellEscape(ref)}"
             steps.sh "docker push ${shellEscape(ref)}"
+        }
+
+        // If a release tag was created later in the pipeline (autoTag), also push it.
+        String releaseTag = (steps.env.RELEASE_TAG ?: steps.env.TAG_NAME ?: '').toString().trim()
+        if (releaseTag) {
+            String ref = "${pushRepository}:${releaseTag}"
+            steps.sh "docker tag ${shellEscape(sourceForExtraTags)} ${shellEscape(ref)}"
+            steps.sh "docker push ${shellEscape(ref)}"
+            steps.echo "Pushed release tag ${releaseTag} for image ${pushRepository}"
         }
     }
 

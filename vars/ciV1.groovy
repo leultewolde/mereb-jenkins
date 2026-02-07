@@ -143,6 +143,9 @@ def call(Map args = [:]) {
                 releaseOrchestrator.execute(cfg, state) { Closure afterEnv ->
                     deployPipeline.run(cfg, state, afterEnv)
                 }
+
+                // If a release tag was created after the initial push, re-tag and push the image with the release tag.
+                dockerPipeline.pushReleaseTag(cfg, state)
             }
         } catch (Throwable err) {
             releaseFlow.cleanupAutoTag(cfg.release)
