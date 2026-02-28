@@ -475,9 +475,14 @@ echo "Published GitHub release ${TAG} to ${REPO}"
         if (!tags || tags.isEmpty()) {
             return ''
         }
-        return tags.sort(false) { String left, String right ->
-            compareVersionTags(left, right)
-        }.last()
+        String latest = tags[0]
+        for (int idx = 1; idx < tags.size(); idx++) {
+            String candidate = tags[idx]
+            if (compareVersionTags(candidate, latest) > 0) {
+                latest = candidate
+            }
+        }
+        return latest
     }
 
     private List<String> listRemoteTags(String remote, String prefix) {
