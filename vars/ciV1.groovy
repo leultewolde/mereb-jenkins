@@ -69,7 +69,12 @@ def call(Map args = [:]) {
     }
 
     Map cfg = ConfigNormalizer.normalize(rawCfg, DEFAULT_ENV_ORDER, PRIMARY_CONFIG)
-    DeliveryPolicy deliveryPolicy = new DeliveryPolicy(cfg.delivery, env)
+    Map deliveryEnv = [
+        BRANCH_NAME: env.BRANCH_NAME ?: '',
+        CHANGE_ID  : env.CHANGE_ID ?: '',
+        TAG_NAME   : env.TAG_NAME ?: ''
+    ]
+    DeliveryPolicy deliveryPolicy = new DeliveryPolicy(cfg.delivery, deliveryEnv)
     cfg.delivery.policy = deliveryPolicy
     Map agent = cfg.agent
 
