@@ -13,15 +13,15 @@ class DeliveryPolicy implements Serializable {
     private final String changeId
     private final String triggerTagName
 
-    DeliveryPolicy(Map deliveryCfg = [:], Object envCtx = null) {
+    DeliveryPolicy(Map deliveryCfg = [:], Map envCtx = [:]) {
         Map cfg = deliveryCfg instanceof Map ? deliveryCfg : [:]
         Map prCfg = cfg.pr instanceof Map ? (cfg.pr as Map) : [:]
         this.mode = ((cfg.mode ?: 'custom').toString().trim().toLowerCase() ?: 'custom')
         this.mainBranch = (cfg.mainBranch ?: 'main').toString().trim() ?: 'main'
         this.prDeployToStg = prCfg.deployToStg as Boolean
-        this.branchName = envValue(envCtx, 'BRANCH_NAME')
-        this.changeId = envValue(envCtx, 'CHANGE_ID')
-        this.triggerTagName = envValue(envCtx, 'TAG_NAME')
+        this.branchName = envCtx?.get('BRANCH_NAME')?.toString()
+        this.changeId = envCtx?.get('CHANGE_ID')?.toString()
+        this.triggerTagName = envCtx?.get('TAG_NAME')?.toString()
     }
 
     boolean isStagedMode() {
@@ -130,16 +130,5 @@ class DeliveryPolicy implements Serializable {
             return 'prod'
         }
         return normalized
-    }
-
-    private static String envValue(Object envCtx, String key) {
-        if (envCtx instanceof Map) {
-            return envCtx[key]?.toString()
-        }
-        try {
-            return envCtx?."${key}"?.toString()
-        } catch (MissingPropertyException ignored) {
-            return null
-        }
     }
 }
