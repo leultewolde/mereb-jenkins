@@ -4,6 +4,7 @@ import org.mereb.ci.build.BuildStages
 import org.mereb.ci.config.ConfigNormalizer
 import org.mereb.ci.config.ConfigValidator
 import org.mereb.ci.credentials.CredentialHelper
+import org.mereb.ci.delivery.DeliveryPolicy
 import org.mereb.ci.deploy.DeployPipeline
 import org.mereb.ci.docker.DockerPipeline
 import org.mereb.ci.mfe.MicrofrontendPipeline
@@ -68,7 +69,19 @@ def call(Map args = [:]) {
     }
 
     Map cfg = ConfigNormalizer.normalize(rawCfg, DEFAULT_ENV_ORDER, PRIMARY_CONFIG)
+    DeliveryPolicy deliveryPolicy = new DeliveryPolicy(cfg.delivery, env)
+    cfg.delivery.policy = deliveryPolicy
     Map agent = cfg.agent
+
+    if (!deliveryPolicy.shouldRunPipeline()) {
+        echo deliveryPolicy.skipReason()
+        try {
+            currentBuild.result = 'NOT_BUILT'
+        } catch (Throwable ignored) {
+            echo 'Unable to set currentBuild.result to NOT_BUILT in this context.'
+        }
+        return
+    }
 
     def runCore = {
         deleteDir()
@@ -142,7 +155,12 @@ def call(Map args = [:]) {
                 Map autoTagCfg = (cfg.release?.autoTag instanceof Map) ? (cfg.release.autoTag as Map) : [:]
                 boolean autoTagEnabled = autoTagCfg.enabled as Boolean
                 String autoTagWhen = (autoTagCfg.when ?: '!pr').toString()
-                boolean shouldAutoTag = autoTagEnabled && Helpers.matchCondition(autoTagWhen, env) && !(env.TAG_NAME?.trim())
+                boolean shouldAutoTag
+                if (deliveryPolicy.isStagedMode()) {
+                    shouldAutoTag = autoTagEnabled && deliveryPolicy.shouldAutoTag() && !(env.TAG_NAME?.trim())
+                } else {
+                    shouldAutoTag = autoTagEnabled && Helpers.matchCondition(autoTagWhen, env) && !(env.TAG_NAME?.trim())
+                }
 
                 if (shouldAutoTag) {
                     // Create the Git tag first so we push the image once with the final tag.

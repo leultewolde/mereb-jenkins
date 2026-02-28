@@ -51,7 +51,10 @@ class PipelineUtils implements Serializable {
             commitShort: state.commitShort ?: '',
             branch     : state.branch ?: '',
             branchSlug : state.branchSanitized ?: '',
+            changeId   : state.changeId ?: '',
+            isPr       : state.isPr ?: '',
             imageTag   : state.imageTag ?: '',
+            imageDigest: state.imageDigest ?: '',
             buildNumber: state.buildNumber ?: '',
             tagName    : state.tagName ?: '',
             repository : state.repository ?: ''

@@ -4,9 +4,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.Helpers
-import org.mereb.ci.util.ApprovalHelper
 import org.mereb.ci.util.StageExecutor
-import org.mereb.ci.util.PipelineUtils
 
 import java.net.URI
 import java.net.URLEncoder
@@ -23,18 +21,16 @@ class ReleaseFlow implements Serializable {
     private final def steps
     private final CredentialHelper credentialHelper
     private final Closure verbRunner
-    private final ApprovalHelper approvalHelper
     private final StageExecutor stageExecutor
 
     ReleaseFlow(def steps,
                 CredentialHelper credentialHelper,
                 Closure verbRunner,
-                ApprovalHelper approvalHelper = null,
+                def ignoredApprovalHelper = null,
                 StageExecutor stageExecutor = null) {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.verbRunner = verbRunner
-        this.approvalHelper = approvalHelper ?: new ApprovalHelper(steps)
         this.stageExecutor = stageExecutor ?: new StageExecutor(steps, credentialHelper)
     }
 
@@ -60,7 +56,6 @@ class ReleaseFlow implements Serializable {
             List<Map> bindings = credentialHelper.bindingsFor(bindingSource)
 
             stageExecutor.run(name, envList, bindings) {
-                maybeRequestApproval(stageCfg.approval as Map, "Run '${name}'?")
                 if (stageCfg.verb) {
                     verbRunner.call(stageCfg.verb as String)
                 } else if (stageCfg.sh) {
@@ -94,8 +89,6 @@ class ReleaseFlow implements Serializable {
                 steps.echo "Tag build detected (${steps.env.TAG_NAME}); skipping auto-tag."
                 return
             }
-
-            requestAutoTagApproval(autoTag.approval)
 
             cleanWorkspaceForTag(autoTag)
 
@@ -132,14 +125,6 @@ class ReleaseFlow implements Serializable {
             }
             withRepoCredential(autoTag, maybeEnv)
         }
-    }
-
-    private void requestAutoTagApproval(Map approval) {
-        approvalHelper.request(approval, 'Create release tag?')
-    }
-
-    private void maybeRequestApproval(Map approval, String defaultMessage) {
-        approvalHelper.request(approval, defaultMessage)
     }
 
     void publishRelease(Map releaseCfg, Map state) {
@@ -377,71 +362,64 @@ echo "Published GitHub release ${TAG} to ${REPO}"
         String email = (autoTag.gitEmail ?: 'ci@mereb.local').toString()
 
         withRepoCredential(autoTag) {
-            steps.sh "git fetch --tags --quiet ${shellEscape(remote)} || true"
-        }
-
-        String pattern = "${prefix}[0-9]*"
-        String latest = steps.sh(script: "git tag --list ${shellEscape(pattern)} --sort=-version:refname | head -n1", returnStdout: true).trim()
-        Map next = computeNextTag(prefix, latest, bump)
-        String nextTag = (next.tag ?: '').toString()
-        if (!nextTag?.trim()) {
-            steps.error 'Failed to compute next release tag.'
-        }
-
-        String exists = steps.sh(script: "git rev-parse --quiet --verify refs/tags/${shellEscape(nextTag)} >/dev/null 2>&1 && echo yes || true", returnStdout: true).trim()
-        if ('yes'.equalsIgnoreCase(exists)) {
-            steps.echo "Tag ${nextTag} already exists locally; skipping auto-tag."
-            steps.env.RELEASE_TAG = nextTag
-            steps.env.TAG_NAME = nextTag
-            return
-        }
-
-        String remoteTagSha = readRemoteTagSha(remote, nextTag, autoTag)
-        if (remoteTagSha) {
-            steps.echo "Tag ${nextTag} already exists on remote (${remoteTagSha}); reusing."
-            steps.sh "git fetch --tags --force ${shellEscape(remote)} refs/tags/${shellEscape(nextTag)}:refs/tags/${shellEscape(nextTag)} || true"
-            steps.env.RELEASE_TAG = nextTag
-            steps.env.TAG_NAME = nextTag
-            return
-        }
-
-        steps.sh "git config user.name ${shellEscape(user)}"
-        steps.sh "git config user.email ${shellEscape(email)}"
-
-        if (annotated) {
-            steps.sh "git tag -a ${shellEscape(nextTag)} -m ${shellEscape(message)}"
-        } else {
-            steps.sh "git tag ${shellEscape(nextTag)}"
-        }
-
-        if (push) {
-            int status = 0
-            withRepoCredential(autoTag) {
-                status = steps.sh(script: "git push ${shellEscape(remote)} ${shellEscape(nextTag)}", returnStatus: true)
+            String latest = latestTagFromRemote(remote, prefix)
+            Map next = computeNextTag(prefix, latest, bump)
+            String nextTag = (next.tag ?: '').toString()
+            if (!nextTag?.trim()) {
+                steps.error 'Failed to compute next release tag.'
             }
-            if (status != 0) {
-                String remoteShaAfter = readRemoteTagSha(remote, nextTag, autoTag)
-                if (remoteShaAfter) {
-                    steps.echo "Push failed but tag ${nextTag} exists on remote (${remoteShaAfter}); proceeding with existing tag."
-                } else {
-                    steps.error "Failed to push tag ${nextTag} to ${remote}; aborting release."
-                }
+
+            String exists = steps.sh(script: "git rev-parse --quiet --verify refs/tags/${shellEscape(nextTag)} >/dev/null 2>&1 && echo yes || true", returnStdout: true).trim()
+            if ('yes'.equalsIgnoreCase(exists)) {
+                steps.echo "Tag ${nextTag} already exists locally; skipping auto-tag."
+                steps.env.RELEASE_TAG = nextTag
+                steps.env.TAG_NAME = nextTag
+                return
             }
-            String verifiedSha = readRemoteTagSha(remote, nextTag, autoTag)
-            if (!verifiedSha) {
-                steps.error "Tag ${nextTag} not found on remote ${remote} after push; aborting release."
+
+            String remoteTagSha = readRemoteTagSha(remote, nextTag)
+            if (remoteTagSha) {
+                steps.echo "Tag ${nextTag} already exists on remote (${remoteTagSha}); reusing."
+                steps.env.RELEASE_TAG = nextTag
+                steps.env.TAG_NAME = nextTag
+                return
+            }
+
+            steps.sh "git config user.name ${shellEscape(user)}"
+            steps.sh "git config user.email ${shellEscape(email)}"
+
+            if (annotated) {
+                steps.sh "git tag -a ${shellEscape(nextTag)} -m ${shellEscape(message)}"
             } else {
-                steps.echo "Verified tag ${nextTag} on remote (${verifiedSha})"
+                steps.sh "git tag ${shellEscape(nextTag)}"
             }
-        } else {
-            steps.echo "Auto-tag push disabled; created local tag ${nextTag}"
-        }
 
-        steps.env.RELEASE_TAG = nextTag
-        steps.env.TAG_NAME = nextTag
-        steps.env.AUTO_TAG_CREATED = nextTag
-        steps.env.AUTO_TAG_REMOTE = remote
-        steps.echo "Created release tag ${nextTag}"
+            if (push) {
+                int status = steps.sh(script: "git push ${shellEscape(remote)} ${shellEscape(nextTag)}", returnStatus: true)
+                if (status != 0) {
+                    String remoteShaAfter = readRemoteTagSha(remote, nextTag)
+                    if (remoteShaAfter) {
+                        steps.echo "Push failed but tag ${nextTag} exists on remote (${remoteShaAfter}); proceeding with existing tag."
+                    } else {
+                        steps.error "Failed to push tag ${nextTag} to ${remote}; aborting release."
+                    }
+                }
+                String verifiedSha = readRemoteTagSha(remote, nextTag)
+                if (!verifiedSha) {
+                    steps.error "Tag ${nextTag} not found on remote ${remote} after push; aborting release."
+                } else {
+                    steps.echo "Verified tag ${nextTag} on remote (${verifiedSha})"
+                }
+            } else {
+                steps.echo "Auto-tag push disabled; created local tag ${nextTag}"
+            }
+
+            steps.env.RELEASE_TAG = nextTag
+            steps.env.TAG_NAME = nextTag
+            steps.env.AUTO_TAG_CREATED = nextTag
+            steps.env.AUTO_TAG_REMOTE = remote
+            steps.echo "Created release tag ${nextTag}"
+        }
     }
 
     private Map computeNextTag(String prefix, String latest, String bump) {
@@ -489,6 +467,56 @@ echo "Published GitHub release ${TAG} to ${REPO}"
             return Integer.parseInt(raw)
         } catch (NumberFormatException ignore) {
             return fallback
+        }
+    }
+
+    private String latestTagFromRemote(String remote, String prefix) {
+        List<String> tags = listRemoteTags(remote, prefix)
+        if (!tags || tags.isEmpty()) {
+            return ''
+        }
+        return tags.sort(false) { String left, String right ->
+            compareVersionTags(left, right)
+        }.last()
+    }
+
+    private List<String> listRemoteTags(String remote, String prefix) {
+        String pattern = "refs/tags/${prefix}*"
+        String raw = steps.sh(
+            script: "git ls-remote --tags --refs ${shellEscape(remote)} ${shellEscape(pattern)} | awk '{print \$2}' | sed 's#refs/tags/##'",
+            returnStdout: true
+        ).trim()
+        if (!raw) {
+            return []
+        }
+        return raw.readLines().collect { it?.trim() }.findAll { it }
+    }
+
+    private static int compareVersionTags(String left, String right) {
+        List<Integer> leftParts = versionParts(left)
+        List<Integer> rightParts = versionParts(right)
+        int max = Math.max(leftParts.size(), rightParts.size())
+        for (int idx = 0; idx < max; idx++) {
+            int leftVal = idx < leftParts.size() ? leftParts[idx] : 0
+            int rightVal = idx < rightParts.size() ? rightParts[idx] : 0
+            if (leftVal != rightVal) {
+                return leftVal <=> rightVal
+            }
+        }
+        return left <=> right
+    }
+
+    private static List<Integer> versionParts(String tag) {
+        String raw = (tag ?: '').replaceFirst(/^[^0-9]*/, '')
+        if (!raw) {
+            return []
+        }
+        return raw.tokenize('.').collect { String item ->
+            try {
+                return Integer.parseInt(item)
+            } catch (NumberFormatException ignored) {
+                return 0
+            }
         }
     }
 

@@ -19,11 +19,12 @@ class HelmDeploymentContextBuilderTest {
         HelmDeploymentContextBuilder builder = new HelmDeploymentContextBuilder(steps, renderer, credentialHelper, vaultHelper)
 
         Map envCfg = [displayName: 'Dev', valuesFiles: [], set: [foo: 'bar']]
-        HelmDeploymentContext context = builder.build('dev', envCfg, [enabled: true], [repository: 'repo', imageTag: 'tag'], new VaultContext(null, []))
+        HelmDeploymentContext context = builder.build('dev', envCfg, [enabled: true], [repository: 'repo', imageTag: 'tag', imageDigest: 'sha256:abc'], new VaultContext(null, []))
 
         assertEquals(['.ci/values-dev.yaml', 'generated.yaml'], context.valuesFiles)
         assertEquals('repo', context.helmArgs.set['image.repository'])
         assertEquals('tag', context.helmArgs.set['image.tag'])
+        assertEquals('sha256:abc', context.helmArgs.set['image.digest'])
     }
 
     private static class FakeSteps {

@@ -2,9 +2,11 @@ package org.mereb.ci.deploy
 
 import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
-import org.mereb.ci.util.ApprovalHelper
+import org.mereb.ci.delivery.DeliveryPolicy
 import org.mereb.ci.util.VaultCredentialHelper
 import org.mereb.ci.util.VaultContext
+
+import static org.mereb.ci.util.PipelineUtils.shellEscape
 
 /**
  * Orchestrates Helm-based environment deployments so ciV1 stays declarative.
@@ -14,7 +16,6 @@ class DeployPipeline implements Serializable {
     private final def steps
     private final CredentialHelper credentialHelper
     private final ValuesTemplateRenderer templateRenderer
-    private final ApprovalHelper approvalHelper
     private final VaultCredentialHelper vaultHelper
     private final HelmDeploymentContextBuilder contextBuilder
 
@@ -22,7 +23,6 @@ class DeployPipeline implements Serializable {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.templateRenderer = templateRenderer ?: new ValuesTemplateRenderer(steps)
-        this.approvalHelper = new ApprovalHelper(steps)
         this.vaultHelper = new VaultCredentialHelper(steps, credentialHelper)
         this.contextBuilder = new HelmDeploymentContextBuilder(steps, this.templateRenderer, credentialHelper, vaultHelper)
     }
@@ -36,23 +36,17 @@ class DeployPipeline implements Serializable {
             return
         }
 
-        order.eachWithIndex { String envName, int idx ->
+        DeliveryPolicy deliveryPolicy = cfg?.delivery?.policy instanceof DeliveryPolicy ? (cfg.delivery.policy as DeliveryPolicy) : null
+
+        order.each { String envName ->
             Map envCfg = envs[envName]
             if (!envCfg) {
                 steps.echo "Environment '${envName}' not defined; skipping."
                 return
             }
-            if (!Helpers.matchCondition(envCfg.when as String, steps.env)) {
+            if (!shouldDeployEnvironment(deliveryPolicy, envName, envCfg)) {
                 steps.echo "Skip deploy '${envCfg.displayName}' — condition '${envCfg.when}' not met"
                 return
-            }
-
-            boolean finalEnv = idx == order.size() - 1
-            Map approvalCfg = envCfg.approval ?: [:]
-            boolean approvalExplicit = approvalCfg.beforeExplicit as Boolean
-            boolean approvalBefore = approvalCfg.before as Boolean
-            if (approvalBefore || (finalEnv && approvalCfg && !approvalExplicit)) {
-                requestDeploymentApproval(envCfg)
             }
 
             VaultContext vaultContext = vaultHelper.prepare(envCfg)
@@ -72,7 +66,7 @@ class DeployPipeline implements Serializable {
                             args.repoPassword = repoCreds.password
                         }
                         steps.helmDeploy(args)
-                        restartWorkloads(envCfg)
+                        restartAndVerifyWorkloads(envCfg, state)
                     }
                 }
 
@@ -82,11 +76,14 @@ class DeployPipeline implements Serializable {
             runSmoke(envCfg, vaultContext)
 
             afterEnvCallback?.call(envName)
-
-            if (idx < order.size() - 1 && !(envCfg.autoPromote as Boolean)) {
-                requestPromotion(envCfg, envName, order[idx + 1])
-            }
         }
+    }
+
+    private boolean shouldDeployEnvironment(DeliveryPolicy deliveryPolicy, String envName, Map envCfg) {
+        if (deliveryPolicy?.isStagedMode()) {
+            return deliveryPolicy.shouldDeployEnvironment(envName)
+        }
+        return Helpers.matchCondition(envCfg.when as String, steps.env)
     }
 
     private void runSmoke(Map envCfg, VaultContext vaultContext) {
@@ -106,26 +103,69 @@ class DeployPipeline implements Serializable {
         }
     }
 
-    private void requestDeploymentApproval(Map envCfg) {
-        approvalHelper.request(envCfg.approval ?: [:], "Deploy ${envCfg.displayName ?: envCfg.name}?")
-    }
-
-    private void requestPromotion(Map envCfg, String current, String next) {
-        approvalHelper.request(envCfg.approval ?: [:], "Promote ${current} deployment to ${next}?", 'Promote')
-    }
-
-    private void restartWorkloads(Map envCfg) {
+    private void restartAndVerifyWorkloads(Map envCfg, Map state) {
         if (envCfg.containsKey('restartWorkloads') && !(envCfg.restartWorkloads as Boolean)) {
             return
         }
         String namespace = envCfg.namespace ?: 'default'
         String release = envCfg.release ?: envCfg.name
-        List<String> commands = [
-            "kubectl -n ${namespace} rollout restart deployment -l app.kubernetes.io/instance=${release}",
-            "kubectl -n ${namespace} rollout restart statefulset -l app.kubernetes.io/instance=${release}"
-        ]
-        commands.each { cmd ->
-            steps.sh(cmd)
+        String timeout = (envCfg.rolloutTimeout ?: envCfg.timeout ?: '10m').toString()
+        List<String> workloads = discoverWorkloads(namespace, release)
+        if (workloads.isEmpty()) {
+            steps.error "Helm release '${release}' did not produce any Deployment or StatefulSet workloads in namespace '${namespace}'."
+        }
+        workloads.each { String workload ->
+            steps.sh "kubectl -n ${shellEscape(namespace)} rollout restart ${shellEscape(workload)}"
+        }
+        workloads.each { String workload ->
+            steps.sh "kubectl -n ${shellEscape(namespace)} rollout status ${shellEscape(workload)} --timeout=${shellEscape(timeout)}"
+        }
+        verifyLiveArtifact(namespace, release, state)
+    }
+
+    private List<String> discoverWorkloads(String namespace, String release) {
+        String selector = "app.kubernetes.io/instance=${release}"
+        List<String> workloads = []
+        ['deployment', 'statefulset'].each { String kind ->
+            String raw = steps.sh(
+                script: "kubectl -n ${shellEscape(namespace)} get ${kind} -l ${shellEscape(selector)} -o name 2>/dev/null || true",
+                returnStdout: true
+            ).trim()
+            if (raw) {
+                workloads.addAll(raw.readLines().collect { it?.trim() }.findAll { it })
+            }
+        }
+        return workloads
+    }
+
+    private void verifyLiveArtifact(String namespace, String release, Map state) {
+        String selector = "app.kubernetes.io/instance=${release}"
+        if (state.imageDigest?.trim()) {
+            String imageIds = steps.sh(
+                script: "kubectl -n ${shellEscape(namespace)} get pods -l ${shellEscape(selector)} -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.imageID}{\"\\n\"}{end}{end}'",
+                returnStdout: true
+            ).trim()
+            if (!imageIds) {
+                steps.error "No running pod image IDs found for release '${release}' in namespace '${namespace}'."
+            }
+            boolean matchesDigest = imageIds.readLines().any { it?.contains(state.imageDigest) }
+            if (!matchesDigest) {
+                steps.error "Release '${release}' is live, but pod image IDs do not contain expected digest '${state.imageDigest}'."
+            }
+            return
+        }
+
+        String expectedImage = "${state.repository}:${state.imageTag}"
+        String images = steps.sh(
+            script: "kubectl -n ${shellEscape(namespace)} get pods -l ${shellEscape(selector)} -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{\"\\n\"}{end}{end}'",
+            returnStdout: true
+        ).trim()
+        if (!images) {
+            steps.error "No running pod images found for release '${release}' in namespace '${namespace}'."
+        }
+        boolean matchesImage = images.readLines().any { it?.trim() == expectedImage }
+        if (!matchesImage) {
+            steps.error "Release '${release}' is live, but none of the running pod images match '${expectedImage}'."
         }
     }
 

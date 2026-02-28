@@ -28,6 +28,15 @@ class ConfigValidator implements Serializable {
             errors << "pnpm section must be a map"
         }
 
+        if (cfg.delivery && !(cfg.delivery instanceof Map)) {
+            errors << "delivery must be a map"
+        }
+        Map delivery = cfg.delivery instanceof Map ? (cfg.delivery as Map) : [:]
+        String mode = (delivery.mode ?: 'custom').toString().trim().toLowerCase()
+        if (!(mode in ['staged', 'custom'])) {
+            errors << "delivery.mode must be one of: staged, custom"
+        }
+
         boolean imageEnabled = true
         if (cfg.image instanceof Boolean) {
             imageEnabled = cfg.image as Boolean
@@ -62,6 +71,23 @@ class ConfigValidator implements Serializable {
                     errors << "deploy.${name} must be a map"
                 }
             }
+            if ('staged'.equals(mode)) {
+                envNodes.each { name, cfgNode ->
+                    if (!(cfgNode instanceof Map)) {
+                        return
+                    }
+                    Map envCfg = cfgNode as Map
+                    if (envCfg.containsKey('when')) {
+                        warnings << "deploy.${name}.when is ignored in staged mode"
+                    }
+                    if (envCfg.containsKey('autoPromote')) {
+                        warnings << "deploy.${name}.autoPromote is ignored in staged mode"
+                    }
+                    if (envCfg.containsKey('approval') || envCfg.containsKey('approve')) {
+                        warnings << "deploy.${name}.approval is ignored in staged mode"
+                    }
+                }
+            }
         }
 
         if (cfg.terraform && !(cfg.terraform instanceof Map)) {
@@ -90,6 +116,20 @@ class ConfigValidator implements Serializable {
             envNodes.each { name, node ->
                 if (!(node instanceof Map)) {
                     errors << "microfrontend.${name} must be a map"
+                }
+            }
+            if ('staged'.equals(mode)) {
+                envNodes.each { name, cfgNode ->
+                    if (!(cfgNode instanceof Map)) {
+                        return
+                    }
+                    Map envCfg = cfgNode as Map
+                    if (envCfg.containsKey('when')) {
+                        warnings << "microfrontend.environments.${name}.when is ignored in staged mode"
+                    }
+                    if (envCfg.containsKey('approval')) {
+                        warnings << "microfrontend.environments.${name}.approval is ignored in staged mode"
+                    }
                 }
             }
         }

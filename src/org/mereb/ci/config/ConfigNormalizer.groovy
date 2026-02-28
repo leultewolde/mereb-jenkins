@@ -34,6 +34,7 @@ class ConfigNormalizer implements Serializable {
             preset = 'node'
         }
         cfg.preset = preset
+        cfg.delivery = normalizeDelivery(source.get('delivery'))
 
         if (!buildSection.containsKey('pnpm') && 'pnpm'.equalsIgnoreCase(preset)) {
             buildSection.put('pnpm', [:])
@@ -266,6 +267,22 @@ class ConfigNormalizer implements Serializable {
         }
 
         return imageCfg
+    }
+
+    private static Map normalizeDelivery(Object raw) {
+        Map data = mapCopy(raw)
+        Map pr = data.get('pr') instanceof Map ? mapCopy(data.get('pr')) : [:]
+        String mode = asString(data.get('mode') ?: 'custom').trim().toLowerCase()
+        if (!(mode in ['staged', 'custom'])) {
+            mode = 'custom'
+        }
+        return [
+            mode      : mode,
+            mainBranch: asString(data.get('mainBranch') ?: 'main').trim() ?: 'main',
+            pr        : [
+                deployToStg: pr.get('deployToStg') as Boolean
+            ]
+        ]
     }
 
     private static String stripRegistryScheme(String value) {
@@ -635,6 +652,7 @@ class ConfigNormalizer implements Serializable {
             wait           : envCfg.get('wait') == null ? true : (envCfg.get('wait') as Boolean),
             atomic         : envCfg.get('atomic') == null ? true : (envCfg.get('atomic') as Boolean),
             timeout        : asString(envCfg.get('timeout') ?: appCfg.get('timeout') ?: '10m'),
+            rolloutTimeout : asString(envCfg.get('rolloutTimeout') ?: envCfg.get('timeout') ?: appCfg.get('timeout') ?: '10m'),
             valuesTemplates: valuesTemplates,
             credentials    : envCfg.get('credentials') instanceof List ? envCfg.get('credentials') : [],
             vault          : vaultCfg

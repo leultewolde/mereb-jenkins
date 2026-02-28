@@ -145,4 +145,26 @@ class ConfigNormalizerTest {
         assertEquals('https://cdn-stg.example.com', cfg.microfrontend.environments.stg.publicBase)
         assertEquals('mfe-admin', cfg.microfrontend.name)
     }
+
+    @Test
+    void "normalizes delivery mode configuration"() {
+        Map raw = [
+            version : 1,
+            build   : [:],
+            image   : [repository: 'ghcr.io/example/app'],
+            deploy  : [:],
+            release : [:],
+            delivery: [
+                mode      : 'staged',
+                mainBranch: 'trunk',
+                pr        : [deployToStg: true]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev'], '.ci/ci.yml')
+
+        assertEquals('staged', cfg.delivery.mode)
+        assertEquals('trunk', cfg.delivery.mainBranch)
+        assertTrue(cfg.delivery.pr.deployToStg)
+    }
 }

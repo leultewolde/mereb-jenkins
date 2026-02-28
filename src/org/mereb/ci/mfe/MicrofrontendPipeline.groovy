@@ -2,6 +2,7 @@ package org.mereb.ci.mfe
 
 import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
+import org.mereb.ci.delivery.DeliveryPolicy
 import org.mereb.ci.util.StageExecutor
 
 import static org.mereb.ci.util.PipelineUtils.mapToEnvList
@@ -59,6 +60,7 @@ class MicrofrontendPipeline implements Serializable {
         baseEnv << "AWS_S3_FORCE_PATH_STYLE=${forcePath}".toString()
 
         List<Map> baseBindings = credentialHelper.bindingsFor([credentials: cfg.aws?.credentials])
+        DeliveryPolicy deliveryPolicy = cfg?.delivery?.policy instanceof DeliveryPolicy ? (cfg.delivery.policy as DeliveryPolicy) : null
 
         List<String> order = cfg.order instanceof List ? (cfg.order as List).collect { it?.toString() } : []
         if (!order || order.isEmpty()) {
@@ -80,15 +82,14 @@ class MicrofrontendPipeline implements Serializable {
             if (!envCfg) {
                 continue
             }
-            if (!Helpers.matchCondition(envCfg.when as String, steps.env)) {
+            boolean shouldPublish = deliveryPolicy?.isStagedMode() ?
+                deliveryPolicy.shouldPublishMicrofrontendEnvironment(envKey) :
+                Helpers.matchCondition(envCfg.when as String, steps.env)
+            if (!shouldPublish) {
                 steps.echo "microfrontend ${remoteName}: skipping ${envKey} (condition '${envCfg.when}' not met)"
                 continue
             }
             String stageLabel = envCfg.displayName ?: envKey
-            Map approvalCfg = envCfg.approval instanceof Map ? (envCfg.approval as Map) : [:]
-            if (approvalCfg.isEmpty() && ['stg', 'prd', 'prod'].contains(envLower)) {
-                approvalCfg = [message: "Publish ${remoteName} to ${stageLabel}?", ok: 'Approve']
-            }
 
             List<Map> bindings = []
             bindings.addAll(baseBindings)
@@ -97,12 +98,6 @@ class MicrofrontendPipeline implements Serializable {
             List<String> envList = []
             envList.addAll(baseEnv)
             envList.addAll(mapToEnvList(envCfg.env))
-
-            if (approvalCfg && !approvalCfg.isEmpty()) {
-                steps.stage("MFE ${stageLabel} Approval") {
-                    approvalHandler?.call(approvalCfg as Map, "Publish ${remoteName} to ${stageLabel}?")
-                }
-            }
 
             stageExecutor.run("MFE ${stageLabel} Deploy", envList, bindings) {
                 steps.sh(script: publishScript(remoteName, manifestFlag, distDir, manifestScript, envCfg, version), label: "Publish ${stageLabel}")

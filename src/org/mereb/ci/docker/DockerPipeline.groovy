@@ -1,9 +1,11 @@
 package org.mereb.ci.docker
 
 import org.mereb.ci.Helpers
+import org.mereb.ci.delivery.DeliveryPolicy
 
 import static org.mereb.ci.util.PipelineUtils.parentDir
 import static org.mereb.ci.util.PipelineUtils.renderTemplate
+import static org.mereb.ci.util.PipelineUtils.sanitizeBranch
 import static org.mereb.ci.util.PipelineUtils.shellEscape
 import static org.mereb.ci.util.PipelineUtils.templateContext
 
@@ -131,23 +133,29 @@ class DockerPipeline implements Serializable {
                     break
                 case 'branch-sha':
                 default:
-                    String branch = ctx.branchSlug ?: 'build'
-                    String sha = state.commitShort ?: state.commit
-                    candidate = "${branch}-${sha}"
+                    candidate = fallbackTag(state, ctx)
                     break
             }
         }
 
         candidate = (candidate ?: '').trim()
         if (!candidate) {
-            String fallbackBranch = ctx.branchSlug ?: 'build'
-            String fallbackSha = state.commitShort ?: state.commit
-            if (!fallbackSha?.trim()) {
-                fallbackSha = System.currentTimeMillis().toString()
-            }
-            candidate = "${fallbackBranch}-${fallbackSha}"
+            candidate = fallbackTag(state, ctx)
         }
         return candidate
+    }
+
+    private static String fallbackTag(Map state, Map ctx) {
+        String fallbackSha = state.commitShort ?: state.commit
+        if (!fallbackSha?.trim()) {
+            fallbackSha = System.currentTimeMillis().toString()
+        }
+        String changeId = sanitizeBranch(state.changeId ?: '')
+        if (changeId?.trim()) {
+            return "pr-${changeId}-${fallbackSha}"
+        }
+        String fallbackBranch = ctx.branchSlug ?: 'build'
+        return "${fallbackBranch}-${fallbackSha}"
     }
 
     private void dockerBuild(Map imageCfg, Map state) {
@@ -183,6 +191,7 @@ class DockerPipeline implements Serializable {
             steps.sh "docker tag ${shellEscape(state.imageRef)} ${shellEscape(pushRef)}"
         }
         steps.sh "docker push ${shellEscape(pushRef)}"
+        state.imageDigest = resolveImageDigest(pushRef)
         String sourceForExtraTags = pushRef
         (pushCfg.extraTags ?: []).each { rawTag ->
             String rendered = renderTemplate(rawTag.toString(), templateContext(state))
@@ -212,6 +221,9 @@ class DockerPipeline implements Serializable {
         }
 
         steps.sh "docker pull ${shellEscape(pushRef)}"
+        if (!state.imageDigest?.trim()) {
+            state.imageDigest = resolveImageDigest(pushRef)
+        }
     }
 
     private boolean shouldGenerateSbom(Map cfg) {
@@ -281,7 +293,29 @@ class DockerPipeline implements Serializable {
         if (!(pushCfg.enabled as Boolean)) {
             return false
         }
+        DeliveryPolicy deliveryPolicy = cfg?.delivery?.policy instanceof DeliveryPolicy ? (cfg.delivery.policy as DeliveryPolicy) : null
+        if (deliveryPolicy?.isStagedMode()) {
+            return deliveryPolicy.shouldPushImage()
+        }
         return Helpers.matchCondition(pushCfg.when as String, steps.env)
+    }
+
+    private String resolveImageDigest(String imageRef) {
+        if (!imageRef?.trim()) {
+            return ''
+        }
+        String digestRef = steps.sh(
+            script: "docker inspect --format='{{index .RepoDigests 0}}' ${shellEscape(imageRef)} 2>/dev/null || true",
+            returnStdout: true
+        ).trim()
+        if (!digestRef) {
+            return ''
+        }
+        int atIndex = digestRef.indexOf('@')
+        if (atIndex < 0 || atIndex + 1 >= digestRef.length()) {
+            return ''
+        }
+        return digestRef.substring(atIndex + 1).trim()
     }
 
     private void dockerLoginIfNeeded(Map imageCfg, Map pushCfg) {

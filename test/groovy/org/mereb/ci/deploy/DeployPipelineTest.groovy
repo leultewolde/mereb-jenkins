@@ -20,6 +20,7 @@ class DeployPipelineTest {
                 release        : 'svc-feed-dev',
                 chart          : 'app-chart',
                 repo           : 'https://example.com/chart',
+                rolloutTimeout : '5m',
                 when           : '',
                 valuesTemplates: [[
                         template: 'templates/values-secret.yaml.tpl',
@@ -30,9 +31,9 @@ class DeployPipelineTest {
         ]
 
         pipeline.run([
-                image : [enabled: false],
+                image : [enabled: true],
                 deploy: [order: ['dev'], environments: [dev: envCfg]]
-        ], [:])
+        ], [repository: 'registry.leultewolde.com/mereb/svc-feed', imageTag: 'main-abc123'])
 
         assertEquals(1, renderer.renderCalls)
         assertEquals('.ci/.rendered/values-dev.secret.yaml', renderer.lastOutput)
@@ -40,8 +41,10 @@ class DeployPipelineTest {
             bindings.any { (it.variable ?: it.tokenVariable) == 'VAULT_TOKEN' && it.credentialsId == 'vault-credentials' }
         }, 'Expected vault credentials to be bound during template rendering')
         assertTrue(steps.withEnvCalls.any { it.VAULT_ADDR == 'https://vault.dev' }, 'Expected VAULT_ADDR to be set during render')
-        assertTrue(steps.shScripts.any { it.contains('kubectl -n apps-dev rollout restart deployment -l app.kubernetes.io/instance=svc-feed-dev') })
-        assertTrue(steps.shScripts.any { it.contains('kubectl -n apps-dev rollout restart statefulset -l app.kubernetes.io/instance=svc-feed-dev') })
+        assertTrue(steps.shScripts.any { it.contains("kubectl -n 'apps-dev' get deployment -l 'app.kubernetes.io/instance=svc-feed-dev' -o name") })
+        assertTrue(steps.shScripts.any { it.contains("kubectl -n 'apps-dev' rollout restart 'deployment/svc-feed-dev'") })
+        assertTrue(steps.shScripts.any { it.contains("kubectl -n 'apps-dev' rollout status 'deployment/svc-feed-dev' --timeout='5m'") })
+        assertTrue(steps.shScripts.any { it.contains("kubectl -n 'apps-dev' get pods -l 'app.kubernetes.io/instance=svc-feed-dev'") })
     }
 
     private static class StubRenderer extends ValuesTemplateRenderer {
@@ -132,15 +135,25 @@ class DeployPipelineTest {
 
         String sh(def args) {
             if (args instanceof Map) {
+                String script = (args.script ?: '').toString()
+                shScripts << script
                 if (args.returnStdout) {
-                    def matcher = args.script =~ /printenv\s+([A-Za-z0-9_]+)/
+                    def matcher = script =~ /printenv\s+([A-Za-z0-9_]+)/
                     if (matcher.find()) {
                         String key = matcher[0][1]
                         return (env[key] ?: '') + '\n'
                     }
+                    if (script.contains("get deployment -l 'app.kubernetes.io/instance=svc-feed-dev' -o name")) {
+                        return "deployment/svc-feed-dev\n"
+                    }
+                    if (script.contains("get statefulset -l 'app.kubernetes.io/instance=svc-feed-dev' -o name")) {
+                        return ''
+                    }
+                    if (script.contains("get pods -l 'app.kubernetes.io/instance=svc-feed-dev' -o jsonpath")) {
+                        return "registry.leultewolde.com/mereb/svc-feed:main-abc123\n"
+                    }
                     return ''
                 }
-                shScripts << (args.script ?: '').toString()
                 return ''
             }
             shScripts << args.toString()

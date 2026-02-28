@@ -65,8 +65,6 @@ class TerraformPipeline implements Serializable {
 
             List<Map> bindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
             stageExecutor.run("Terraform ${envCfg.displayName}", envList, bindings) {
-                approvalHandler?.call(envCfg.approval as Map, "Apply Terraform for ${envCfg.displayName}?")
-
                 steps.dir(basePath) {
                     Map<String, String> combinedVars = [:]
                     combinedVars.putAll(envCfg.vars ?: [:])

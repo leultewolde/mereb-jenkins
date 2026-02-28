@@ -87,6 +87,9 @@ class HelmDeploymentContextBuilder implements Serializable {
         if (imageCfg?.enabled && state?.imageTag) {
             merged['image.tag'] = state.imageTag
         }
+        if (imageCfg?.enabled && state?.imageDigest) {
+            merged['image.digest'] = state.imageDigest
+        }
         return merged
     }
 }

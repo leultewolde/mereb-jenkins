@@ -9,6 +9,7 @@ class CiV1PipelineJenkinsTest extends BasePipelineTest {
     List<String> stages = []
     List<List<String>> withEnvCalls = []
     Map envVars = [:]
+    Map currentBuild = [result: null]
 
     @BeforeEach
     void setup() {
@@ -21,6 +22,7 @@ class CiV1PipelineJenkinsTest extends BasePipelineTest {
         ]
         binding.setVariable('env', envVars)
         binding.setVariable('scm', [:])
+        binding.setVariable('currentBuild', currentBuild)
 
         helper.registerAllowedMethod('node', [Closure]) { Closure body -> body() }
         helper.registerAllowedMethod('node', [String, Closure]) { String label, Closure body -> body() }
@@ -75,5 +77,41 @@ class CiV1PipelineJenkinsTest extends BasePipelineTest {
 
         assertFalse(withEnvCalls.isEmpty())
         assertTrue(withEnvCalls.flatten().contains('HOME=/workspace'))
+    }
+
+    @Test
+    void "ciV1 skips direct non-main branch builds"() {
+        envVars.BRANCH_NAME = 'feature/login'
+        def script = loadScript('vars/ciV1.groovy')
+
+        script.call(configPath: '.ci/ci.yml')
+
+        assertEquals('NOT_BUILT', currentBuild.result)
+        assertTrue(withEnvCalls.isEmpty())
+        assertTrue(stages.isEmpty())
+    }
+
+    @Test
+    void "ciV1 skips staged tag builds"() {
+        envVars.TAG_NAME = 'v1.2.3'
+        helper.registerAllowedMethod('readYaml', [Map]) { Map args ->
+            [
+                version : 1,
+                preset  : 'node',
+                build   : [stages: []],
+                image   : false,
+                deploy  : [:],
+                terraform: [:],
+                release : [:],
+                delivery: [mode: 'staged']
+            ]
+        }
+        def script = loadScript('vars/ciV1.groovy')
+
+        script.call(configPath: '.ci/ci.yml')
+
+        assertEquals('NOT_BUILT', currentBuild.result)
+        assertTrue(withEnvCalls.isEmpty())
+        assertTrue(stages.isEmpty())
     }
 }

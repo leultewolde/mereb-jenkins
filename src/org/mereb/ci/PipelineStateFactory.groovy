@@ -3,6 +3,7 @@ package org.mereb.ci
 import org.mereb.ci.docker.DockerPipeline
 import org.mereb.ci.util.PipelineHelper
 
+import static org.mereb.ci.util.PipelineUtils.boolString
 import static org.mereb.ci.util.PipelineUtils.sanitizeBranch
 
 /**
@@ -25,10 +26,13 @@ class PipelineStateFactory implements Serializable {
         state.commitShort = commit?.take(12) ?: ''
         state.branch = steps.env.BRANCH_NAME ?: ''
         state.branchSanitized = sanitizeBranch(state.branch)
+        state.changeId = steps.env.CHANGE_ID ?: ''
+        state.isPr = boolString(state.changeId?.trim() ? true : false)
         state.buildNumber = (steps.env.BUILD_NUMBER ?: '').toString()
         state.tagName = steps.env.TAG_NAME ?: ''
         state.repository = ''
         state.imageTag = ''
+        state.imageDigest = ''
         state.imageRef = ''
 
         if ((steps.env.TAG_NAME ?: '').trim()) {
@@ -52,6 +56,10 @@ class PipelineStateFactory implements Serializable {
             exportedEnv << "IMAGE_TAG=${state.imageTag}".toString()
             exportedEnv << "IMAGE_REF=${state.imageRef}".toString()
         }
+        if (state.changeId?.trim()) {
+            exportedEnv << "CHANGE_ID=${state.changeId}".toString()
+        }
+        exportedEnv << "IS_PR=${state.isPr}".toString()
 
         return new StateContext(state, exportedEnv)
     }

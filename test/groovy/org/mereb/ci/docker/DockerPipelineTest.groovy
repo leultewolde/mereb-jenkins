@@ -41,6 +41,25 @@ class DockerPipelineTest {
     }
 
     @Test
+    void "uses pr-prefixed tags when building pull requests without a rendered tag"() {
+        Map image = [
+            enabled    : true,
+            repository : 'ghcr.io/mereb/api',
+            tagTemplate: '{{tagName}}'
+        ]
+        Map state = [
+            branch        : 'PR-24',
+            branchSanitized: 'pr-24',
+            changeId      : '24',
+            commit        : 'fedcba9876543210fedcba9876543210fedcba98',
+            commitShort   : 'fedcba987654',
+            tagName       : ''
+        ]
+
+        assertEquals('pr-24-fedcba987654', DockerPipeline.computeImageTag(image, state))
+    }
+
+    @Test
     void "keeps repository when no push override is provided"() {
         Map image = [repository: 'ghcr.io/mereb/api']
         Map push = [:]

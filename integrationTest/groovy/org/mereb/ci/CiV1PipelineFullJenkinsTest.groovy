@@ -12,6 +12,7 @@ class CiV1PipelineFullJenkinsTest extends BasePipelineTest {
     List<List<String>> withEnvValues
     Map envVars
     List<String> shCalls
+    Map currentBuild
 
     @BeforeEach
     void setup() {
@@ -27,8 +28,10 @@ class CiV1PipelineFullJenkinsTest extends BasePipelineTest {
             CHANGE_ID: '',
             HOME: '/home/jenkins'
         ]
+        currentBuild = [result: null]
         binding.setVariable('env', envVars)
         binding.setVariable('scm', [:])
+        binding.setVariable('currentBuild', currentBuild)
         binding.setVariable('docker', [image: { String name -> [inside: { Closure body -> body() }] }])
 
         helper.registerAllowedMethod('node', [Closure]) { Closure body -> body() }
@@ -39,7 +42,14 @@ class CiV1PipelineFullJenkinsTest extends BasePipelineTest {
         helper.registerAllowedMethod('readYaml', [Map]) { Map args -> integrationConfig() }
         helper.registerAllowedMethod('pwd', []) { '/workspace' }
         helper.registerAllowedMethod('sh', [String]) { String script -> shCalls << script; respondToShell(script) }
-        helper.registerAllowedMethod('sh', [Map]) { Map args -> String script = args.script ?: ''; shCalls << script; respondToShell(script) }
+        helper.registerAllowedMethod('sh', [Map]) { Map args ->
+            String script = args.script ?: ''
+            shCalls << script
+            if (args.returnStatus) {
+                return respondStatus(script)
+            }
+            respondToShell(script)
+        }
         helper.registerAllowedMethod('withEnv', [List, Closure]) { List envList, Closure body -> withEnvValues << envList.collect { it.toString() }; body() }
         helper.registerAllowedMethod('helmDeploy', [Map]) { Map args -> helmCalls << args }
         helper.registerAllowedMethod('runSmoke', [Map]) { Map args -> smokeCalls << args }
@@ -68,6 +78,7 @@ class CiV1PipelineFullJenkinsTest extends BasePipelineTest {
         Map helmArgs = helmCalls.first()
         assertEquals('ghcr.io/mereb/app', helmArgs.release)
         assertEquals('main-abcdef123456', helmArgs.set['image.tag'])
+        assertEquals('sha256:abcdef1234567890', helmArgs.set['image.digest'])
         assertEquals('Dev', smokeCalls.first().environment)
         assertTrue(withEnvValues.flatten().any { it.startsWith('IMAGE_TAG=main-abcdef123456') })
     }
@@ -121,10 +132,10 @@ class CiV1PipelineFullJenkinsTest extends BasePipelineTest {
         if (script.contains('git describe --tags')) {
             return ''
         }
-        if (script.contains('git fetch --tags')) {
+        if (script.contains('git ls-remote --tags --refs')) {
             return ''
         }
-        if (script.contains('git tag --list')) {
+        if (script.contains("git ls-remote 'origin' refs/tags/")) {
             return ''
         }
         if (script.contains('git rev-parse --quiet --verify')) {
@@ -139,9 +150,28 @@ class CiV1PipelineFullJenkinsTest extends BasePipelineTest {
         if (script.contains('git config user.name') || script.contains('git config user.email')) {
             return ''
         }
+        if (script.contains("docker inspect --format='{{index .RepoDigests 0}}'")) {
+            return "ghcr.io/mereb/app@sha256:abcdef1234567890\n"
+        }
+        if (script.contains("kubectl -n 'apps' get deployment -l 'app.kubernetes.io/instance=ghcr.io/mereb/app' -o name")) {
+            return "deployment/ghcr.io-mereb-app\n"
+        }
+        if (script.contains("kubectl -n 'apps' get statefulset -l 'app.kubernetes.io/instance=ghcr.io/mereb/app' -o name")) {
+            return ''
+        }
+        if (script.contains("kubectl -n 'apps' get pods -l 'app.kubernetes.io/instance=ghcr.io/mereb/app' -o jsonpath")) {
+            return "docker-pullable://ghcr.io/mereb/app@sha256:abcdef1234567890\n"
+        }
         if (script.contains('git push')) {
             return ''
         }
         return ''
+    }
+
+    private int respondStatus(String script) {
+        if (script.contains('git push')) {
+            return 0
+        }
+        return 0
     }
 }
