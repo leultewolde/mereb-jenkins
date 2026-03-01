@@ -70,7 +70,9 @@ class DeployPipeline implements Serializable {
                     }
                 }
 
-                credentialHelper.withOptionalCredentials(deployBindings, runDeploy)
+                credentialHelper.withOptionalCredentials(deployBindings) {
+                    withKubernetesDiagnostics(envCfg, 'deploy', state, runDeploy)
+                }
             }
 
             runSmoke(envCfg, vaultContext)
@@ -97,7 +99,9 @@ class DeployPipeline implements Serializable {
             payload.environment = envCfg.displayName
             List<Map> smokeBindings = vaultContext.bindings
             Closure run = {
-                steps.runSmoke(payload)
+                withKubernetesDiagnostics(envCfg, 'smoke', [:]) {
+                    steps.runSmoke(payload)
+                }
             }
             credentialHelper.withOptionalCredentials(smokeBindings, run)
         }
@@ -120,7 +124,7 @@ class DeployPipeline implements Serializable {
         workloads.each { String workload ->
             steps.sh "kubectl -n ${shellEscape(namespace)} rollout status ${shellEscape(workload)} --timeout=${shellEscape(timeout)}"
         }
-        verifyLiveArtifact(namespace, release, state)
+        verifyLiveArtifact(namespace, release, workloads, state)
     }
 
     private List<String> discoverWorkloads(String namespace, String release) {
@@ -138,7 +142,12 @@ class DeployPipeline implements Serializable {
         return workloads
     }
 
-    private void verifyLiveArtifact(String namespace, String release, Map state) {
+    private void verifyLiveArtifact(String namespace, String release, List<String> workloads, Map state) {
+        if (allWorkloadsScaledToZero(namespace, workloads)) {
+            steps.echo "Skip live artifact verification for release '${release}' in namespace '${namespace}' because all workloads are scaled to 0."
+            return
+        }
+
         String selector = "app.kubernetes.io/instance=${release}"
         if (state.imageDigest?.trim()) {
             String imageIds = steps.sh(
@@ -167,6 +176,83 @@ class DeployPipeline implements Serializable {
         if (!matchesImage) {
             steps.error "Release '${release}' is live, but none of the running pod images match '${expectedImage}'."
         }
+    }
+
+    private boolean allWorkloadsScaledToZero(String namespace, List<String> workloads) {
+        if (!workloads || workloads.isEmpty()) {
+            return false
+        }
+
+        List<Integer> replicas = workloads.collect { String workload ->
+            String raw = steps.sh(
+                script: "kubectl -n ${shellEscape(namespace)} get ${shellEscape(workload)} -o jsonpath='{.spec.replicas}' 2>/dev/null || true",
+                returnStdout: true
+            ).trim()
+            if (!raw) {
+                return 1
+            }
+            return raw.toInteger()
+        }
+
+        return replicas.every { Integer value -> value == 0 }
+    }
+
+    private void withKubernetesDiagnostics(Map envCfg, String phase, Map state, Closure action) {
+        try {
+            action.call()
+        } catch (Throwable err) {
+            try {
+                emitKubernetesDiagnostics(envCfg, phase, state)
+            } catch (Throwable diagnosticErr) {
+                steps.echo "k8s diagnostics failed during ${phase}: ${diagnosticErr}"
+            }
+            throw err
+        }
+    }
+
+    private void emitKubernetesDiagnostics(Map envCfg, String phase, Map state) {
+        String namespace = envCfg.namespace ?: 'default'
+        String release = envCfg.release ?: envCfg.name
+        if (!namespace?.trim() || !release?.trim()) {
+            steps.echo "k8s diagnostics skipped for ${phase}; namespace or release is missing."
+            return
+        }
+
+        String selector = "app.kubernetes.io/instance=${release}"
+        steps.echo "k8s diagnostics: collecting ${phase} failure details for release '${release}' in namespace '${namespace}'."
+
+        safeDiagnosticCommand("workloads", "kubectl -n ${shellEscape(namespace)} get deployment,statefulset -l ${shellEscape(selector)} -o wide 2>/dev/null || true")
+        safeDiagnosticCommand("pods", "kubectl -n ${shellEscape(namespace)} get pods -l ${shellEscape(selector)} -o wide 2>/dev/null || true")
+        safeDiagnosticCommand("events", "kubectl -n ${shellEscape(namespace)} get events --sort-by=.lastTimestamp 2>/dev/null | tail -n 50 || true")
+
+        List<String> workloads = discoverWorkloads(namespace, release)
+        workloads.each { String workload ->
+            safeDiagnosticCommand("describe ${workload}", "kubectl -n ${shellEscape(namespace)} describe ${shellEscape(workload)} 2>/dev/null || true")
+        }
+
+        List<String> pods = discoverPods(namespace, release)
+        pods.take(3).each { String pod ->
+            safeDiagnosticCommand("describe pod ${pod}", "kubectl -n ${shellEscape(namespace)} describe pod ${shellEscape(pod)} 2>/dev/null || true")
+            safeDiagnosticCommand("logs ${pod}", "kubectl -n ${shellEscape(namespace)} logs ${shellEscape(pod)} --all-containers=true --tail=200 2>/dev/null || true")
+            safeDiagnosticCommand("previous logs ${pod}", "kubectl -n ${shellEscape(namespace)} logs ${shellEscape(pod)} --all-containers=true --previous --tail=200 2>/dev/null || true")
+        }
+    }
+
+    private List<String> discoverPods(String namespace, String release) {
+        String selector = "app.kubernetes.io/instance=${release}"
+        String raw = steps.sh(
+            script: "kubectl -n ${shellEscape(namespace)} get pods -l ${shellEscape(selector)} -o jsonpath='{range .items[*]}{.metadata.name}{\"\\n\"}{end}' 2>/dev/null || true",
+            returnStdout: true
+        ).trim()
+        if (!raw) {
+            return []
+        }
+        return raw.readLines().collect { it?.trim() }.findAll { it }
+    }
+
+    private void safeDiagnosticCommand(String label, String command) {
+        steps.echo "k8s diagnostics: ${label}"
+        steps.sh command
     }
 
 }

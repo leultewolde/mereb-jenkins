@@ -47,6 +47,66 @@ class DeployPipelineTest {
         assertTrue(steps.shScripts.any { it.contains("kubectl -n 'apps-dev' get pods -l 'app.kubernetes.io/instance=svc-feed-dev'") })
     }
 
+    @Test
+    void "skips live artifact verification when all workloads are scaled to zero"() {
+        FakeSteps steps = new FakeSteps()
+        CredentialHelper credentialHelper = new CredentialHelper(steps)
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper, new ValuesTemplateRenderer(steps))
+
+        Map envCfg = [
+                displayName   : 'DEV_OUTBOX',
+                namespace     : 'apps-dev',
+                release       : 'svc-messaging-dev-outbox',
+                chart         : 'app-chart',
+                repo          : 'https://example.com/chart',
+                rolloutTimeout: '5m',
+                when          : ''
+        ]
+
+        pipeline.run([
+                image : [enabled: true],
+                deploy: [order: ['dev_outbox'], environments: [dev_outbox: envCfg]]
+        ], [repository: 'registry.leultewolde.com/mereb/svc-messaging', imageTag: 'main-abc123', imageDigest: 'sha256:deadbeef'])
+
+        assertTrue(steps.shScripts.any { it.contains("get deployment -l 'app.kubernetes.io/instance=svc-messaging-dev-outbox' -o name") })
+        assertTrue(steps.shScripts.any { it.contains("get 'deployment/svc-messaging-dev-outbox' -o jsonpath='{.spec.replicas}'") })
+        assertFalse(steps.shScripts.any { it.contains("get pods -l 'app.kubernetes.io/instance=svc-messaging-dev-outbox'") })
+    }
+
+    @Test
+    void "emits kubernetes diagnostics when rollout status fails"() {
+        FakeSteps steps = new FakeSteps()
+        steps.failScriptContains = "rollout status 'deployment/svc-feed-dev' --timeout='5m'"
+        steps.failure = new RuntimeException("rollout failed")
+        CredentialHelper credentialHelper = new CredentialHelper(steps)
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper, new ValuesTemplateRenderer(steps))
+
+        Map envCfg = [
+                displayName    : 'DEV',
+                namespace      : 'apps-dev',
+                release        : 'svc-feed-dev',
+                chart          : 'https://example.com/chart',
+                repo           : 'https://example.com/chart',
+                rolloutTimeout : '5m',
+                when           : ''
+        ]
+
+        RuntimeException ex = assertThrows(RuntimeException) {
+            pipeline.run([
+                    image : [enabled: true],
+                    deploy: [order: ['dev'], environments: [dev: envCfg]]
+            ], [repository: 'registry.leultewolde.com/mereb/svc-feed', imageTag: 'main-abc123'])
+        }
+
+        assertEquals('rollout failed', ex.message)
+        assertTrue(steps.shScripts.any { it.contains("get deployment,statefulset -l 'app.kubernetes.io/instance=svc-feed-dev' -o wide") })
+        assertTrue(steps.shScripts.any { it.contains("get pods -l 'app.kubernetes.io/instance=svc-feed-dev' -o wide") })
+        assertTrue(steps.shScripts.any { it.contains("get events --sort-by=.lastTimestamp") })
+        assertTrue(steps.shScripts.any { it.contains("describe 'deployment/svc-feed-dev'") })
+        assertTrue(steps.shScripts.any { it.contains("describe pod 'svc-feed-dev-abc'") })
+        assertTrue(steps.shScripts.any { it.contains("logs 'svc-feed-dev-abc' --all-containers=true --tail=200") })
+    }
+
     private static class StubRenderer extends ValuesTemplateRenderer {
         final FakeSteps stepsRef
         int renderCalls = 0
@@ -76,6 +136,8 @@ class DeployPipelineTest {
         final List<List<Map>> withCredentialsBindings = []
         final List<String> shScripts = []
         final List<Map<String, String>> withEnvCalls = []
+        String failScriptContains
+        RuntimeException failure
 
         void echo(String msg) {}
 
@@ -146,17 +208,33 @@ class DeployPipelineTest {
                     if (script.contains("get deployment -l 'app.kubernetes.io/instance=svc-feed-dev' -o name")) {
                         return "deployment/svc-feed-dev\n"
                     }
+                    if (script.contains("get deployment -l 'app.kubernetes.io/instance=svc-messaging-dev-outbox' -o name")) {
+                        return "deployment/svc-messaging-dev-outbox\n"
+                    }
                     if (script.contains("get statefulset -l 'app.kubernetes.io/instance=svc-feed-dev' -o name")) {
                         return ''
                     }
+                    if (script.contains("get statefulset -l 'app.kubernetes.io/instance=svc-messaging-dev-outbox' -o name")) {
+                        return ''
+                    }
+                    if (script.contains("get pods -l 'app.kubernetes.io/instance=svc-feed-dev'") && script.contains(".metadata.name")) {
+                        return "svc-feed-dev-abc\n"
+                    }
                     if (script.contains("get pods -l 'app.kubernetes.io/instance=svc-feed-dev' -o jsonpath")) {
                         return "registry.leultewolde.com/mereb/svc-feed:main-abc123\n"
+                    }
+                    if (script.contains("get 'deployment/svc-messaging-dev-outbox' -o jsonpath='{.spec.replicas}'")) {
+                        return "0\n"
                     }
                     return ''
                 }
                 return ''
             }
-            shScripts << args.toString()
+            String script = args.toString()
+            shScripts << script
+            if (failScriptContains && script.contains(failScriptContains)) {
+                throw (failure ?: new RuntimeException("script failed"))
+            }
             return ''
         }
 
