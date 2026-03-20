@@ -56,6 +56,7 @@ class DeployPipeline implements Serializable {
             steps.stage("Deploy ${envCfg.displayName}") {
                 Map helmArgs = deploymentContext.helmArgs
                 Closure runDeploy = {
+                    ensureImagePullSecret(envCfg, cfg.image)
                     credentialHelper.withRepoCredentials(envCfg.repoCredentials) { Map repoCreds ->
                         Map args = [:]
                         args.putAll(helmArgs)
@@ -79,6 +80,49 @@ class DeployPipeline implements Serializable {
 
             afterEnvCallback?.call(envName)
         }
+    }
+
+    private void ensureImagePullSecret(Map envCfg, Map imageCfg) {
+        if (!(imageCfg?.enabled as Boolean)) {
+            return
+        }
+
+        Map pullCreds = imageCfg?.push?.credentials instanceof Map ? (Map) imageCfg.push.credentials : [:]
+        String credentialId = pullCreds.id?.toString()?.trim()
+        String namespace = (envCfg.namespace ?: 'default').toString().trim()
+        String registry = imageCfg?.registryHost?.toString()?.trim()
+        if (!credentialId || !namespace || !registry) {
+            return
+        }
+
+        String secretName = 'regcred'
+        String usernameEnv = sanitizeEnvVar((pullCreds.usernameEnv ?: 'DOCKER_USERNAME').toString(), 'DOCKER_USERNAME')
+        String passwordEnv = sanitizeEnvVar((pullCreds.passwordEnv ?: 'DOCKER_PASSWORD').toString(), 'DOCKER_PASSWORD')
+
+        Closure applySecret = {
+            String kubectl = buildKubectlBase(envCfg)
+            steps.withCredentials([
+                steps.usernamePassword(credentialsId: credentialId, usernameVariable: usernameEnv, passwordVariable: passwordEnv)
+            ]) {
+                steps.sh("""#!/usr/bin/env bash
+set -euo pipefail
+${kubectl} get namespace ${shellEscape(namespace)} >/dev/null 2>&1 || ${kubectl} create namespace ${shellEscape(namespace)} >/dev/null
+${kubectl} -n ${shellEscape(namespace)} create secret docker-registry ${shellEscape(secretName)} \\
+  --docker-server=${shellEscape(registry)} \\
+  --docker-username="\$${usernameEnv}" \\
+  --docker-password="\$${passwordEnv}" \\
+  --dry-run=client -o yaml | ${kubectl} apply -f -
+""")
+            }
+        }
+
+        if (envCfg.kubeconfig) {
+            steps.withEnv(["KUBECONFIG=${envCfg.kubeconfig}"]) {
+                applySecret.call()
+            }
+            return
+        }
+        applySecret.call()
     }
 
     private boolean shouldDeployEnvironment(DeliveryPolicy deliveryPolicy, String envName, Map envCfg) {
@@ -253,6 +297,27 @@ class DeployPipeline implements Serializable {
     private void safeDiagnosticCommand(String label, String command) {
         steps.echo "k8s diagnostics: ${label}"
         steps.sh command
+    }
+
+    private String buildKubectlBase(Map envCfg) {
+        List<String> parts = ['kubectl']
+        if (envCfg.kubeContext) {
+            parts << '--context'
+            parts << shellEscape(envCfg.kubeContext.toString())
+        }
+        return parts.join(' ')
+    }
+
+    private void validateEnvVarName(String name) {
+        if (!(name ==~ /[A-Za-z_][A-Za-z0-9_]*/)) {
+            steps.error "Invalid environment variable name '${name}' for registry credentials."
+        }
+    }
+
+    private String sanitizeEnvVar(String raw, String fallback) {
+        String name = raw?.trim() ?: fallback
+        validateEnvVarName(name)
+        return name
     }
 
 }

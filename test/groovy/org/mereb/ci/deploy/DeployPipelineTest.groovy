@@ -48,6 +48,45 @@ class DeployPipelineTest {
     }
 
     @Test
+    void "creates registry pull secret before helm deployment"() {
+        FakeSteps steps = new FakeSteps()
+        CredentialHelper credentialHelper = new CredentialHelper(steps)
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper, new ValuesTemplateRenderer(steps))
+
+        Map envCfg = [
+                displayName   : 'DEV',
+                namespace     : 'apps-dev',
+                release       : 'svc-feed-dev',
+                chart         : 'app-chart',
+                repo          : 'https://example.com/chart',
+                rolloutTimeout: '5m',
+                when          : ''
+        ]
+
+        pipeline.run([
+                image : [
+                        enabled     : true,
+                        registryHost: 'registry.leultewolde.com',
+                        push        : [
+                                credentials: [
+                                        id         : 'docker-registry-local',
+                                        usernameEnv: 'DOCKER_USERNAME',
+                                        passwordEnv: 'DOCKER_PASSWORD'
+                                ]
+                        ]
+                ],
+                deploy: [order: ['dev'], environments: [dev: envCfg]]
+        ], [repository: 'registry.leultewolde.com/mereb/svc-feed', imageTag: 'main-abc123'])
+
+        assertTrue(steps.withCredentialsBindings.any { bindings ->
+            bindings.any { it.credentialsId == 'docker-registry-local' && it.usernameVariable == 'DOCKER_USERNAME' && it.passwordVariable == 'DOCKER_PASSWORD' }
+        }, 'Expected docker registry credentials to be bound during deploy')
+        assertTrue(steps.shScripts.any { it.contains("create secret docker-registry 'regcred'") })
+        assertTrue(steps.shScripts.any { it.contains("--docker-server='registry.leultewolde.com'") })
+        assertEquals(1, steps.helmDeployCalls.size())
+    }
+
+    @Test
     void "skips live artifact verification when all workloads are scaled to zero"() {
         FakeSteps steps = new FakeSteps()
         CredentialHelper credentialHelper = new CredentialHelper(steps)
@@ -135,6 +174,7 @@ class DeployPipelineTest {
         final Map<String, String> writes = [:]
         final List<List<Map>> withCredentialsBindings = []
         final List<String> shScripts = []
+        final List<Map> helmDeployCalls = []
         final List<Map<String, String>> withEnvCalls = []
         String failScriptContains
         RuntimeException failure
@@ -157,7 +197,13 @@ class DeployPipelineTest {
             body?.call()
         }
 
-        void helmDeploy(Map args) {}
+        void helmDeploy(Map args) {
+            helmDeployCalls << new LinkedHashMap(args)
+        }
+
+        Map usernamePassword(Map args) {
+            return new LinkedHashMap(args)
+        }
 
         void withCredentials(List bindings, Closure body) {
             withCredentialsBindings << bindings
