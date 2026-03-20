@@ -85,17 +85,30 @@ Each environment supports:
 ```yaml
 terraform:
   autoInstall: true
+  pluginCacheDir: .ci/terraform-plugin-cache
   environments:
     dev:
       displayName: Dev Cluster
       when: 'branch=main & !pr'
+      lock:
+        resource: infra-platform-dev
       vars:
         environment: dev
-      approval:
-        before: true
+      verify:
+        timeout: 180s
+        resources:
+          - kind: deployment
+            name: api
+            namespace: apps
+            wait: available
+          - kind: pod
+            selector: app=optional-worker
+            namespace: apps
+            wait: ready
+            optional: true
 ```
 
-The pipeline auto-installs Terraform (per `version`), selects workspaces, and can defer environments gated on tags (e.g., `when: 'tag=^v'`).
+The pipeline auto-installs Terraform (per `version`), selects workspaces, can reuse providers through `pluginCacheDir`, can queue full environment rollouts through Jenkins `lock(resource: ...)` when the Lockable Resources plugin is available, can verify Kubernetes resources after apply, and can defer environments gated on tags (e.g., `when: 'tag=^v'`).
 
 ## Microfrontend Section
 ```yaml
@@ -160,7 +173,7 @@ release:
       type: string
 ```
 
-- `autoTag.afterEnvironment` gates tagging until a specific deploy environment finishes.
+- `autoTag.afterEnvironment` gates tagging until a specific deploy or Terraform environment finishes.
 - GitHub releases inherit credentials from `autoTag` when not explicitly provided.
 
 ### Release Stage Helper: `pnpm.publish`

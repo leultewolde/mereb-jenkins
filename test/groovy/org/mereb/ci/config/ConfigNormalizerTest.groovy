@@ -167,4 +167,39 @@ class ConfigNormalizerTest {
         assertEquals('trunk', cfg.delivery.mainBranch)
         assertTrue(cfg.delivery.pr.deployToStg)
     }
+
+    @Test
+    void "normalizes terraform plugin cache, lock, and verify resources"() {
+        Map raw = [
+            version  : 1,
+            image    : false,
+            terraform: [
+                pluginCacheDir: '.ci/tf-cache',
+                environments  : [
+                    dev: [
+                        lock  : [
+                            resource: 'infra-platform-dev'
+                        ],
+                        verify: [
+                            timeout  : '120s',
+                            resources: [
+                                [kind: 'deployment', name: 'apollo-router', namespace: 'router-dev', wait: 'available'],
+                                [kind: 'pod', selector: 'app=api', namespace: 'apps-dev', wait: 'ready', optional: true]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev'], '.ci/ci.yml')
+
+        assertEquals('.ci/tf-cache', cfg.terraform.pluginCacheDir)
+        assertEquals('infra-platform-dev', cfg.terraform.environments.dev.lock.resource)
+        assertEquals('120s', cfg.terraform.environments.dev.verify.timeout)
+        assertEquals('deployment', cfg.terraform.environments.dev.verify.resources[0].kind)
+        assertEquals('apollo-router', cfg.terraform.environments.dev.verify.resources[0].name)
+        assertEquals('app=api', cfg.terraform.environments.dev.verify.resources[1].selector)
+        assertTrue(cfg.terraform.environments.dev.verify.resources[1].optional)
+    }
 }

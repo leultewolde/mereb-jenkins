@@ -41,9 +41,11 @@ class ReleaseOrchestrator implements Serializable {
             return
         }
 
-        List<String> deferredTerraform = terraformPipeline.run(cfg.terraform, null, true)
-        boolean deferredTerraformRan = false
+        List<String> deployOrder = (cfg.deploy?.order instanceof List) ? (cfg.deploy.order as List).collect { it?.toString() } : []
+        boolean terraformOnly = (cfg.terraform?.enabled as Boolean) && deployOrder.isEmpty()
 
+        List<String> deferredTerraform = []
+        boolean deferredTerraformRan = false
         Closure runDeferredTerraform = {
             if (deferredTerraformRan) {
                 return
@@ -51,12 +53,11 @@ class ReleaseOrchestrator implements Serializable {
             if (steps.env.RELEASE_TAG?.trim() && deferredTerraform && !deferredTerraform.isEmpty()) {
                 steps.env.TAG_NAME = steps.env.RELEASE_TAG
                 steps.echo "Running deferred Terraform environments after creating tag ${steps.env.RELEASE_TAG}"
-                terraformPipeline.run(cfg.terraform, deferredTerraform, false)
+                terraformPipeline.run(cfg.terraform, deferredTerraform, false, null)
                 deferredTerraformRan = true
             }
         }
 
-        List<String> deployOrder = (cfg.deploy?.order instanceof List) ? (cfg.deploy.order as List).collect { it?.toString() } : []
         ReleaseCoordinator releaseCoordinator = new ReleaseCoordinator(
             cfg.release?.autoTag,
             deployOrder,
@@ -68,12 +69,19 @@ class ReleaseOrchestrator implements Serializable {
             { runDeferredTerraform() }
         )
 
-        releaseCoordinator.runIfEager()
+        Closure afterEnvCallback = releaseCoordinator.afterEnvironmentHook()
+        deferredTerraform = terraformPipeline.run(cfg.terraform, null, true, afterEnvCallback)
+
+        if (!terraformOnly) {
+            releaseCoordinator.runIfEager()
+        }
         runDeferredTerraform()
 
-        Closure afterEnvCallback = releaseCoordinator.afterEnvironmentHook()
         deployCallback?.call(afterEnvCallback)
 
+        if (terraformOnly) {
+            releaseCoordinator.runIfEager()
+        }
         runDeferredTerraform()
         releaseCoordinator.ensureReleaseStagesRan()
         publishRelease?.call(cfg.release, state)

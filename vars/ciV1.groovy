@@ -161,10 +161,11 @@ def call(Map args = [:]) {
                 boolean autoTagEnabled = autoTagCfg.enabled as Boolean
                 String autoTagWhen = (autoTagCfg.when ?: '!pr').toString()
                 boolean shouldAutoTag
+                boolean canEagerTag = (cfg.image?.enabled as Boolean) && !autoTagCfg.afterEnvironment
                 if (deliveryPolicy.isStagedMode()) {
-                    shouldAutoTag = autoTagEnabled && deliveryPolicy.shouldAutoTag() && !(env.TAG_NAME?.trim())
+                    shouldAutoTag = canEagerTag && autoTagEnabled && deliveryPolicy.shouldAutoTag() && !(env.TAG_NAME?.trim())
                 } else {
-                    shouldAutoTag = autoTagEnabled && Helpers.matchCondition(autoTagWhen, env) && !(env.TAG_NAME?.trim())
+                    shouldAutoTag = canEagerTag && autoTagEnabled && Helpers.matchCondition(autoTagWhen, env) && !(env.TAG_NAME?.trim())
                 }
 
                 if (shouldAutoTag) {

@@ -107,6 +107,7 @@
         "path": { "type": "string" },
         "autoInstall": { "type": "boolean" },
         "version": { "type": "string" },
+        "pluginCacheDir": { "type": "string" },
         "environments": { "$ref": "#/definitions/terraformEnvironments" }
       },
       "additionalProperties": true
@@ -207,6 +208,8 @@
         "properties": {
           "displayName": { "type": "string" },
           "when": { "type": "string" },
+          "lock": { "$ref": "#/definitions/terraformLock" },
+          "verify": { "$ref": "#/definitions/terraformVerify" },
           "vars": {
             "type": "object",
             "additionalProperties": { "type": ["string", "number", "boolean"] }
@@ -214,6 +217,42 @@
         },
         "additionalProperties": true
       }
+    },
+    "terraformVerify": {
+      "type": "object",
+      "properties": {
+        "timeout": { "type": "string" },
+        "resources": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/terraformVerifyResource" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "terraformLock": {
+      "type": "object",
+      "properties": {
+        "resource": { "type": "string" }
+      },
+      "required": ["resource"],
+      "additionalProperties": true
+    },
+    "terraformVerifyResource": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string" },
+        "name": { "type": "string" },
+        "selector": { "type": "string" },
+        "namespace": { "type": "string" },
+        "optional": { "type": "boolean" },
+        "wait": {
+          "type": "string",
+          "enum": ["exists", "ready", "available", "complete"]
+        },
+        "timeout": { "type": "string" }
+      },
+      "required": ["kind"],
+      "additionalProperties": true
     },
     "credential": {
       "type": "object",

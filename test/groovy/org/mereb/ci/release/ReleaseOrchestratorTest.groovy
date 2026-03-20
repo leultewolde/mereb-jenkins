@@ -77,6 +77,34 @@ class ReleaseOrchestratorTest {
         assertEquals(1, handleCalled)
     }
 
+    @Test
+    void "terraform-only pipelines do not eager tag before immediate terraform run"() {
+        FakeSteps steps = new FakeSteps()
+        FakeTerraformPipeline terraform = new FakeTerraformPipeline()
+        List<String> events = []
+
+        ReleaseOrchestrator orchestrator = new ReleaseOrchestrator(
+            steps,
+            terraform,
+            { releaseCfg, state -> events << 'tag' },
+            { cfg, state -> },
+            { stages -> },
+            { releaseCfg, state -> }
+        )
+
+        Map cfg = [
+            terraform    : [enabled: true],
+            release      : [autoTag: [enabled: true]],
+            releaseStages: []
+        ]
+
+        terraform.events = events
+        orchestrator.execute(cfg, [:]) { Closure afterEnv -> }
+
+        assertEquals(['terraform', 'tag'], events)
+        assertEquals(1, terraform.calls.size())
+    }
+
     private static class FakeSteps {
         Map env = [:]
         List<String> echoes = []
@@ -89,8 +117,10 @@ class ReleaseOrchestratorTest {
     private static class FakeTerraformPipeline {
         List<Map> calls = []
         List<String> deferred = ['prd']
+        List<String> events = []
 
-        List<String> run(Map cfg, List<String> overrideOrder, boolean capture) {
+        List<String> run(Map cfg, List<String> overrideOrder, boolean capture, Closure afterEnvCallback = null) {
+            events << 'terraform'
             calls << [order: overrideOrder, capture: capture]
             return capture ? deferred : []
         }

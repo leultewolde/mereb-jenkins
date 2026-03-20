@@ -17,15 +17,17 @@ class TerraformPipeline implements Serializable {
     private final CredentialHelper credentialHelper
     private final StageExecutor stageExecutor
     private final Closure approvalHandler
+    private final TerraformVerifier verifier
 
     TerraformPipeline(def steps, CredentialHelper credentialHelper, StageExecutor stageExecutor, Closure approvalHandler) {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.stageExecutor = stageExecutor ?: new StageExecutor(steps, credentialHelper)
         this.approvalHandler = approvalHandler
+        this.verifier = new TerraformVerifier(steps)
     }
 
-    List<String> run(Map tfCfg, List<String> overrideOrder = null, boolean captureDeferred = false) {
+    List<String> run(Map tfCfg, List<String> overrideOrder = null, boolean captureDeferred = false, Closure afterEnvCallback = null) {
         List<String> deferred = []
         if (!tfCfg?.enabled) return deferred
         Map envs = tfCfg.environments ?: [:]
@@ -38,7 +40,12 @@ class TerraformPipeline implements Serializable {
         String basePath = (tfCfg.path ?: 'infra/platform/terraform').toString()
         String binary = resolveTerraformBinary(tfCfg)
         List<String> globalEnv = mapToEnvList(tfCfg.env)
+        String pluginCacheDir = resolvePluginCacheDir(tfCfg)
+        if (pluginCacheDir) {
+            globalEnv << "TF_PLUGIN_CACHE_DIR=${pluginCacheDir}"
+        }
         Map<String, String> globalBackend = tfCfg.backend ?: [:]
+        List<String> completed = []
 
         order.each { String envName ->
             Map envCfg = envs[envName]
@@ -64,51 +71,72 @@ class TerraformPipeline implements Serializable {
             backend.putAll(envCfg.backend ?: [:])
 
             List<Map> bindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
-            stageExecutor.run("Terraform ${envCfg.displayName}", envList, bindings) {
-                steps.dir(basePath) {
-                    Map<String, String> combinedVars = [:]
-                    combinedVars.putAll(envCfg.vars ?: [:])
-                    String kubeEnvVar = envCfg.kubeconfigEnv ?: 'KUBECONFIG'
-                    String kubePath = resolveEnvVar(steps, kubeEnvVar)
-                    if (kubePath?.trim() && !combinedVars.containsKey('kubeconfig_path')) {
-                        combinedVars['kubeconfig_path'] = kubePath.trim()
-                    }
-                    if (envCfg.kubeContext && !combinedVars.containsKey('kube_context')) {
-                        combinedVars['kube_context'] = envCfg.kubeContext
-                    }
+            Closure rollout = {
+                stageExecutor.run("Terraform ${envCfg.displayName}", envList, bindings) {
+                    steps.dir(basePath) {
+                        if (pluginCacheDir) {
+                            steps.sh "mkdir -p ${shellEscape(pluginCacheDir)}"
+                        }
+                        Map<String, String> combinedVars = [:]
+                        combinedVars.putAll(envCfg.vars ?: [:])
+                        String kubeEnvVar = envCfg.kubeconfigEnv ?: 'KUBECONFIG'
+                        String kubePath = resolveEnvVar(steps, kubeEnvVar)
+                        if (kubePath?.trim() && !combinedVars.containsKey('kubeconfig_path')) {
+                            combinedVars['kubeconfig_path'] = kubePath.trim()
+                        }
+                        if (envCfg.kubeContext && !combinedVars.containsKey('kube_context')) {
+                            combinedVars['kube_context'] = envCfg.kubeContext
+                        }
 
-                    Closure commands = {
-                        if (!envList.isEmpty()) {
-                            steps.withEnv(envList) {
+                        Closure commands = {
+                            if (!envList.isEmpty()) {
+                                steps.withEnv(envList) {
+                                    runTerraformCommands(binary, tfCfg, envCfg, backend, combinedVars)
+                                }
+                            } else {
                                 runTerraformCommands(binary, tfCfg, envCfg, backend, combinedVars)
                             }
-                        } else {
-                            runTerraformCommands(binary, tfCfg, envCfg, backend, combinedVars)
                         }
-                    }
-                    String envPath = envCfg.path ?: '.'
-                    if (envPath && envPath != '.' && envPath != './') {
-                        steps.dir(envPath) {
+                        String envPath = envCfg.path ?: '.'
+                        if (envPath && envPath != '.' && envPath != './') {
+                            steps.dir(envPath) {
+                                commands()
+                            }
+                        } else {
                             commands()
                         }
-                    } else {
-                        commands()
+                    }
+                }
+
+                if (envCfg.verify?.resources) {
+                    stageExecutor.run("Verify ${envCfg.displayName}", envList, bindings) {
+                        verifier.run(envCfg)
+                    }
+                }
+
+                Map smoke = envCfg.smoke ?: [:]
+                if (smoke.url || smoke.script || smoke.command) {
+                    steps.stage("Smoke ${envCfg.displayName}") {
+                        Map payload = [:]
+                        payload.putAll(smoke)
+                        payload.environment = envCfg.displayName
+                        List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
+                        Closure smokeRun = {
+                            steps.runSmoke(payload)
+                        }
+                        credentialHelper.withOptionalCredentials(smokeBindings, smokeRun)
                     }
                 }
             }
 
-            Map smoke = envCfg.smoke ?: [:]
-            if (smoke.url || smoke.script || smoke.command) {
-                steps.stage("Smoke ${envCfg.displayName}") {
-                    Map payload = [:]
-                    payload.putAll(smoke)
-                    payload.environment = envCfg.displayName
-                    List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
-                    Closure smokeRun = {
-                        steps.runSmoke(payload)
-                    }
-                    credentialHelper.withOptionalCredentials(smokeBindings, smokeRun)
-                }
+            withTerraformLock(envCfg, rollout)
+
+            completed << envName
+        }
+
+        if (afterEnvCallback && !completed.isEmpty()) {
+            completed.each { String envName ->
+                afterEnvCallback.call(envName)
             }
         }
 
@@ -121,6 +149,22 @@ class TerraformPipeline implements Serializable {
         }
         String trimmed = condition.trim()
         return trimmed.startsWith('tag=') || trimmed.contains(' tag=')
+    }
+
+    private void withTerraformLock(Map envCfg, Closure body) {
+        String resource = envCfg?.lock?.resource?.toString()?.trim()
+        if (!resource) {
+            body.call()
+            return
+        }
+        steps.echo "Waiting for Terraform lock resource '${resource}' before running ${envCfg.displayName}"
+        try {
+            steps.lock(resource: resource) {
+                body.call()
+            }
+        } catch (MissingMethodException | NoSuchMethodError err) {
+            steps.error("terraform lock: Jenkins 'lock' step is unavailable for resource '${resource}'. Install/configure the Lockable Resources plugin.")
+        }
     }
 
     private void runTerraformCommands(String binary, Map tfCfg, Map envCfg, Map backend, Map vars) {
@@ -266,6 +310,18 @@ class TerraformPipeline implements Serializable {
 
     private String resolveTerraformInstallDir(Map tfCfg) {
         String dir = (tfCfg.installDir ?: '.ci/bin').toString()
+        if (dir.startsWith('/')) {
+            return dir
+        }
+        String ws = steps.pwd()
+        return "${ws.replaceAll(/\/+$/, '')}/${dir}"
+    }
+
+    private String resolvePluginCacheDir(Map tfCfg) {
+        String dir = (tfCfg.pluginCacheDir ?: '').toString().trim()
+        if (!dir) {
+            return ''
+        }
         if (dir.startsWith('/')) {
             return dir
         }

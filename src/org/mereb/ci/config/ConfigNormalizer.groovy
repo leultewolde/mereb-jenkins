@@ -380,6 +380,7 @@ class ConfigNormalizer implements Serializable {
             enabled     : !envs.isEmpty(),
             path        : asString(section.get('path') ?: 'infra/platform/terraform'),
             binary      : asString(section.get('binary') ?: 'terraform'),
+            pluginCacheDir: asString(section.get('pluginCacheDir')),
             env         : toStringMap(section.get('env')),
             initArgs    : toStringList(section.get('initArgs')),
             planArgs    : toStringList(section.get('planArgs')),
@@ -417,6 +418,8 @@ class ConfigNormalizer implements Serializable {
             kubeContext : data.get('kubeContext'),
             approval    : normalizeApproval(data.get('approval') ?: data.get('approve')),
             credentials : data.get('credentials') instanceof List ? data.get('credentials') : [],
+            lock        : normalizeTerraformLock(data.get('lock')),
+            verify      : normalizeTerraformVerify(data.get('verify')),
             smoke       : normalizeSmoke(data.get('smoke'))
         ]
         return env
@@ -731,6 +734,61 @@ class ConfigNormalizer implements Serializable {
             return [url: value, retries: 0, delay: '5', timeout: '60s']
         }
         return [script: value, retries: 0, delay: '5', timeout: '60s']
+    }
+
+    private static Map normalizeTerraformVerify(Object raw) {
+        if (!(raw instanceof Map)) {
+            return [:]
+        }
+        Map cfg = mapCopy(raw)
+        List<Map> resources = []
+        Object resourceNode = cfg.get('resources')
+        if (resourceNode instanceof List) {
+            for (Object entry : (List) resourceNode) {
+                if (!(entry instanceof Map)) {
+                    continue
+                }
+                Map item = mapCopy(entry as Map)
+                String kind = asString(item.get('kind'))
+                String name = asString(item.get('name'))
+                String selector = asString(item.get('selector'))
+                if (!kind || (!name && !selector)) {
+                    continue
+                }
+                resources << [
+                    kind     : kind,
+                    name     : name ?: null,
+                    selector : selector ?: null,
+                    namespace: asString(item.get('namespace')) ?: null,
+                    wait     : asString(item.get('wait') ?: 'exists') ?: 'exists',
+                    timeout  : asString(item.get('timeout')) ?: null,
+                    optional : item.get('optional') as Boolean
+                ]
+            }
+        }
+        if (resources.isEmpty()) {
+            return [:]
+        }
+        return [
+            timeout  : asString(cfg.get('timeout') ?: '180s'),
+            resources: resources
+        ]
+    }
+
+    private static Map normalizeTerraformLock(Object raw) {
+        if (raw instanceof CharSequence) {
+            String resource = asString(raw)
+            return resource ? [resource: resource] : [:]
+        }
+        if (!(raw instanceof Map)) {
+            return [:]
+        }
+        Map cfg = mapCopy(raw)
+        String resource = asString(cfg.get('resource') ?: cfg.get('name'))
+        if (!resource) {
+            return [:]
+        }
+        return [resource: resource]
     }
 
     private static Map normalizeApproval(Object raw) {
