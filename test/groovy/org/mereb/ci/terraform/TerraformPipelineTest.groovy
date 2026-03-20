@@ -76,6 +76,43 @@ class TerraformPipelineTest {
     }
 
     @Test
+    void "runs pre-plan hooks after init and workspace selection"() {
+        FakeSteps steps = new FakeSteps()
+        FakeCredentialHelper credentialHelper = new FakeCredentialHelper(steps)
+        TerraformPipeline pipeline = new TerraformPipeline(steps, credentialHelper, new StageExecutor(steps, credentialHelper), null)
+
+        Map cfg = [
+            enabled     : true,
+            path        : 'terraform',
+            environments: [
+                dev: [
+                    displayName: 'DEV',
+                    when       : '!pr',
+                    workspace  : 'dev',
+                    prePlan    : [
+                        "terraform state rm 'old.addr' || true",
+                        "terraform state rm 'older.addr' || true"
+                    ]
+                ]
+            ]
+        ]
+
+        pipeline.run(cfg)
+
+        int initIndex = steps.shCalls.findIndexOf { it.contains("'terraform' init") }
+        int workspaceIndex = steps.shCalls.findIndexOf { it.contains("workspace select 'dev' || 'terraform' workspace new 'dev'") }
+        int firstHookIndex = steps.shCalls.findIndexOf { it == "terraform state rm 'old.addr' || true" }
+        int secondHookIndex = steps.shCalls.findIndexOf { it == "terraform state rm 'older.addr' || true" }
+        int planIndex = steps.shCalls.findIndexOf { it.contains("'terraform' plan") }
+
+        assertTrue(initIndex >= 0)
+        assertTrue(workspaceIndex > initIndex)
+        assertTrue(firstHookIndex > workspaceIndex)
+        assertTrue(secondHookIndex > firstHookIndex)
+        assertTrue(planIndex > secondHookIndex)
+    }
+
+    @Test
     void "wraps terraform verify and smoke in the configured Jenkins lock"() {
         FakeSteps steps = new FakeSteps()
         FakeCredentialHelper credentialHelper = new FakeCredentialHelper(steps)

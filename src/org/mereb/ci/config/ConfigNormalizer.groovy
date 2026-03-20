@@ -407,6 +407,7 @@ class ConfigNormalizer implements Serializable {
             workspace   : data.get('workspace') != null ? data.get('workspace').toString() : null,
             planOut     : data.get('planOut') != null ? data.get('planOut').toString() : null,
             initArgs    : toStringList(data.get('initArgs')),
+            prePlan     : toStringList(data.get('prePlan')),
             planArgs    : toStringList(data.get('planArgs')),
             applyArgs   : toStringList(data.get('applyArgs')),
             varFiles    : toStringList(data.get('varFiles')),

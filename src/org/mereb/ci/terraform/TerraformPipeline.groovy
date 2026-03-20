@@ -174,6 +174,7 @@ class TerraformPipeline implements Serializable {
             if (envCfg.workspace) {
                 selectTerraformWorkspace(binary, envCfg.workspace.toString())
             }
+            runTerraformPrePlanHooks(envCfg.prePlan)
             runTerraformPlan(binary, tfCfg.planArgs, envCfg.planArgs, envCfg.varFiles, vars, planOut)
             if (envCfg.apply as Boolean) {
                 runTerraformApply(binary, tfCfg.applyArgs, envCfg.applyArgs, planOut, envCfg.autoApply as Boolean)
@@ -223,6 +224,13 @@ class TerraformPipeline implements Serializable {
             cmd << "-out=${shellEscape(planOut)}"
         }
         steps.sh cmd.join(' ')
+    }
+
+    private void runTerraformPrePlanHooks(List<String> commands) {
+        List<String> hooks = (commands ?: []).findAll { it?.trim() }
+        hooks.each { String command ->
+            steps.sh command
+        }
     }
 
     private void runTerraformApply(String binary, List<String> globalArgs, List<String> envArgs, String planOut, boolean autoApprove) {

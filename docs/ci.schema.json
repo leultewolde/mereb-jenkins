@@ -208,6 +208,15 @@
         "properties": {
           "displayName": { "type": "string" },
           "when": { "type": "string" },
+          "prePlan": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            ]
+          },
           "lock": { "$ref": "#/definitions/terraformLock" },
           "verify": { "$ref": "#/definitions/terraformVerify" },
           "vars": {

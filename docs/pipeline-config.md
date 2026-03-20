@@ -92,6 +92,8 @@ terraform:
       when: 'branch=main & !pr'
       lock:
         resource: infra-platform-dev
+      prePlan:
+        - terraform state rm 'module.legacy.kubernetes_manifest.old_resource' || true
       vars:
         environment: dev
       verify:
@@ -108,7 +110,7 @@ terraform:
             optional: true
 ```
 
-The pipeline auto-installs Terraform (per `version`), selects workspaces, can reuse providers through `pluginCacheDir`, can queue full environment rollouts through Jenkins `lock(resource: ...)` when the Lockable Resources plugin is available, can verify Kubernetes resources after apply, and can defer environments gated on tags (e.g., `when: 'tag=^v'`).
+The pipeline auto-installs Terraform (per `version`), selects workspaces, can run one-off `prePlan` shell hooks after `init`/workspace selection, can reuse providers through `pluginCacheDir`, can queue full environment rollouts through Jenkins `lock(resource: ...)` when the Lockable Resources plugin is available, can verify Kubernetes resources after apply, and can defer environments gated on tags (e.g., `when: 'tag=^v'`).
 
 ## Microfrontend Section
 ```yaml

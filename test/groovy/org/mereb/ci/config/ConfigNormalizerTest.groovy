@@ -177,6 +177,9 @@ class ConfigNormalizerTest {
                 pluginCacheDir: '.ci/tf-cache',
                 environments  : [
                     dev: [
+                        prePlan: [
+                            "terraform state rm 'module.platform_stack.kubernetes_manifest.kong_cors_plugin' || true"
+                        ],
                         lock  : [
                             resource: 'infra-platform-dev'
                         ],
@@ -195,6 +198,7 @@ class ConfigNormalizerTest {
         Map cfg = ConfigNormalizer.normalize(raw, ['dev'], '.ci/ci.yml')
 
         assertEquals('.ci/tf-cache', cfg.terraform.pluginCacheDir)
+        assertEquals("terraform state rm 'module.platform_stack.kubernetes_manifest.kong_cors_plugin' || true", cfg.terraform.environments.dev.prePlan[0])
         assertEquals('infra-platform-dev', cfg.terraform.environments.dev.lock.resource)
         assertEquals('120s', cfg.terraform.environments.dev.verify.timeout)
         assertEquals('deployment', cfg.terraform.environments.dev.verify.resources[0].kind)
