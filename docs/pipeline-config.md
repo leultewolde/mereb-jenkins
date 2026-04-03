@@ -80,6 +80,7 @@ Each environment supports:
 - `repoCredentials` for private Helm repos.
 - `repoCredentials.usernameEnv` / `passwordEnv` to customize the env vars bound during deploys (defaults to `HELM_REPO_USERNAME` / `HELM_REPO_PASSWORD`).
 - `valuesFiles`, `set`, `setString`, `setFile` to tweak Helm releases.
+- `approval` and `autoPromote` keys are accepted by the config model, but the current `DeployPipeline` runtime does not enforce them yet.
 
 ## Terraform Section
 ```yaml
@@ -111,6 +112,8 @@ terraform:
 ```
 
 The pipeline auto-installs Terraform (per `version`), selects workspaces, can run one-off `prePlan` shell hooks after `init`/workspace selection, can reuse providers through `pluginCacheDir`, can queue full environment rollouts through Jenkins `lock(resource: ...)` when the Lockable Resources plugin is available, can verify Kubernetes resources after apply, and can defer environments gated on tags (e.g., `when: 'tag=^v'`).
+
+`approval` is accepted by the config model, but the current `TerraformPipeline` runtime does not enforce it yet.
 
 ## Microfrontend Section
 ```yaml
@@ -155,8 +158,9 @@ microfrontend:
 ```
 
 - Uses the release tag when available (falls back to the commit SHA) to version S3 paths.
-- `manifestFlag`/`manifestEntry` default to the `name` (`mfe-admin` → `--admin`, `mfe_admin` entry).
-- Approvals run before staging/production environments; `forcePathStyle` and `endpoint` support Minio/S3 compatibles.
+- `manifestFlag`/`manifestEntry` default to the `name` (`mfe-admin` -> `--admin`, `mfe_admin` entry).
+- `approval` blocks are accepted by the config model, but the current `MicrofrontendPipeline` runtime does not execute those gates yet.
+- `forcePathStyle` and `endpoint` support Minio and other S3-compatible targets.
 
 ## Release Section
 ```yaml
@@ -177,6 +181,7 @@ release:
 
 - `autoTag.afterEnvironment` gates tagging until a specific deploy or Terraform environment finishes.
 - GitHub releases inherit credentials from `autoTag` when not explicitly provided.
+- `approval` on `autoTag` and `releaseStages` is normalized, but current runtime code does not execute those approval gates yet.
 
 ### Release Stage Helper: `pnpm.publish`
 Use the built-in verb instead of hand-written bash to publish npm packages:
@@ -204,5 +209,5 @@ Defaults:
 
 ## Validation & Migration
 - The library emits warnings and fails fast if the config violates the schema.
-- Legacy `ci.yml` support is deprecated and will be removed after **December 2024**. Use `.ci/ci.yml` plus the schema in this folder to migrate.
+- `.ci/ci.yml` is the primary config path. Legacy `ci.yml` fallback still exists in the runtime and still emits a deprecation warning.
 - For detailed tips on moving from the v0 pipelines, read [`migration-v1.md`](migration-v1.md).
