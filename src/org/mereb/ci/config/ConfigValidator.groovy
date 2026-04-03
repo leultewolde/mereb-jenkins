@@ -1,5 +1,7 @@
 package org.mereb.ci.config
 
+import org.mereb.ci.recipe.RecipeCompatibilityValidator
+
 /**
  * Lightweight structural validation for .ci/ci.yml. Not a full JSON Schema parser,
  * but enough to fail fast with actionable messages.
@@ -144,6 +146,8 @@ class ConfigValidator implements Serializable {
         if (!cfg.pnpm && !buildMap && !(cfg.preset ?: '').toString().trim()) {
             warnings << "No build stages defined. The pipeline will skip build/test unless custom stages are added."
         }
+
+        errors.addAll(RecipeCompatibilityValidator.validate(cfg))
 
         return new ValidationResult(errors.unique(), warnings.unique())
     }

@@ -1,6 +1,8 @@
 package org.mereb.ci.config
 
 import org.mereb.ci.build.PnpmPreset
+import org.mereb.ci.recipe.RecipeResolver
+import org.mereb.ci.recipe.RecipeType
 
 import static org.mereb.ci.util.PipelineUtils.toStringList
 import static org.mereb.ci.util.PipelineUtils.toStringMap
@@ -34,6 +36,8 @@ class ConfigNormalizer implements Serializable {
             preset = 'node'
         }
         cfg.preset = preset
+        RecipeType requestedRecipe = RecipeType.fromValue(source.get('recipe'))
+        cfg.requestedRecipe = requestedRecipe?.value
         cfg.delivery = normalizeDelivery(source.get('delivery'))
 
         if (!buildSection.containsKey('pnpm') && 'pnpm'.equalsIgnoreCase(preset)) {
@@ -53,6 +57,7 @@ class ConfigNormalizer implements Serializable {
         cfg.release = normalizeRelease(source.get('release'))
         cfg.deploy = normalizeDeploy(source, defaultEnvOrder)
         cfg.ai = mapCopy(source.get('ai'))
+        cfg.recipe = RecipeResolver.resolveNormalized(cfg).value
 
         return cfg
     }

@@ -21,6 +21,7 @@ class ConfigNormalizerTest {
         Map cfg = ConfigNormalizer.normalize(raw, ['dev', 'stg', 'prd'], '.ci/ci.yml')
 
         assertFalse(cfg.requiresGradleHome)
+        assertEquals('image', cfg.recipe)
         assertEquals('pnpm', cfg.preset.toLowerCase())
         assertTrue(cfg.buildStages*.name.contains('Install dependencies'))
         assertEquals('apps/web', cfg.buildStages.find { it.name == 'Install dependencies' }?.env?.PNPM_PACKAGE_DIR)
@@ -140,10 +141,29 @@ class ConfigNormalizerTest {
         Map cfg = ConfigNormalizer.normalize(raw, ['dev', 'stg', 'prd'], '.ci/ci.yml')
 
         assertTrue(cfg.microfrontend.enabled)
+        assertEquals('microfrontend', cfg.recipe)
         assertEquals(['dev', 'stg'], cfg.microfrontend.order)
         assertEquals('cdn-dev', cfg.microfrontend.environments.dev.bucket)
         assertEquals('https://cdn-stg.example.com', cfg.microfrontend.environments.stg.publicBase)
         assertEquals('mfe-admin', cfg.microfrontend.name)
+    }
+
+    @Test
+    void "preserves explicit recipe override when config is compatible"() {
+        Map raw = [
+            version: 1,
+            recipe : 'package',
+            image  : false,
+            build  : [:],
+            release: [
+                autoTag: [enabled: true]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev'], '.ci/ci.yml')
+
+        assertEquals('package', cfg.requestedRecipe)
+        assertEquals('package', cfg.recipe)
     }
 
     @Test

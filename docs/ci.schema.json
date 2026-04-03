@@ -12,6 +12,10 @@
       "type": "string",
       "enum": ["node", "pnpm", "java-gradle"]
     },
+    "recipe": {
+      "type": "string",
+      "enum": ["build", "package", "image", "service", "microfrontend", "terraform"]
+    },
     "agent": {
       "type": "object",
       "properties": {

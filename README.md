@@ -15,6 +15,8 @@ The main entrypoint, `ciV1`, loads a repository's pipeline config, validates and
 - Git tag creation and GitHub release publishing
 - Optional AI-generated release suggestions
 
+Internally, `ciV1` now resolves a recipe and dispatches to a recipe-specific executor. The public entrypoint and existing consumer Jenkinsfiles stay the same.
+
 ## Who Uses It
 
 Internal users interact with this project directly:
@@ -49,12 +51,11 @@ At a high level the library behaves like this:
 
 1. Bootstrap on a Jenkins node, check out source, and locate `.ci/ci.yml` (falling back to legacy `ci.yml` if present).
 2. Validate the raw config with `ConfigValidator` and normalize it with `ConfigNormalizer`.
-3. Freeze trigger behavior with `DeliveryPolicy` and compute runtime state with `PipelineStateFactory`.
-4. Run normalized build stages and optional matrix stages.
-5. Fetch optional AI release suggestions before packaging and release work.
-6. Build the Docker image and optionally generate SBOMs, scan it, push it, verify it, and sign it.
-7. Run Terraform, Helm deploys, microfrontend publishing, release stages, Git tagging, and GitHub release publishing through `ReleaseOrchestrator`.
-8. Clean the workspace in a `finally` block.
+3. Resolve a recipe from the config shape or optional explicit `recipe` field.
+4. Freeze trigger behavior with `DeliveryPolicy` and compute runtime state with `PipelineStateFactory`.
+5. Run shared phases: build stages, matrix stages, and optional AI suggestions.
+6. Hand off to the resolved recipe executor for package, image, service, microfrontend, terraform, or build-only sequencing.
+7. Clean the workspace in a `finally` block.
 
 Two delivery styles are supported:
 
@@ -65,6 +66,7 @@ Two delivery styles are supported:
 
 - `ConfigValidator` and `docs/ci.schema.json`: fail fast on malformed pipeline config
 - `ConfigNormalizer`: turns loose YAML into a predictable runtime config map
+- `RecipeResolver` and recipe executors: dispatch `ciV1` into the correct internal pipeline recipe
 - `BuildStages` and `VerbRunner`: execute preset or custom build work
 - `DockerPipeline`: image lifecycle including push verification, SBOM, scan, and signing
 - `TerraformPipeline`: ordered environment orchestration with deferred tag-gated runs
@@ -90,6 +92,7 @@ Repository consumers configure the library with `.ci/ci.yml`. The most important
 
 - [`docs/pipeline-config.md`](docs/pipeline-config.md): human-readable config guide
 - [`docs/ci.schema.json`](docs/ci.schema.json): schema for validation and editor tooling
+- [`docs/recipe-executors.md`](docs/recipe-executors.md): maintainer guide for core-vs-recipe ownership
 - [`docs/architecture.md`](docs/architecture.md): architectural design of this library
 - [`docs/behavior-design.md`](docs/behavior-design.md): runtime behavior and actor interaction design
 - [`docs/ai-client.md`](docs/ai-client.md): optional AI suggestion integration
@@ -98,6 +101,7 @@ Minimal example:
 
 ```yaml
 version: 1
+recipe: service # optional; auto-detected when omitted
 build:
   preset: pnpm
   pnpm:
@@ -119,6 +123,7 @@ deploy:
 ## Current Behavior Notes
 
 - `.ci/ci.yml` is the primary config path. Legacy `ci.yml` fallback still exists in the runtime.
+- `recipe` is optional. When omitted, `ciV1` auto-detects the internal executor from the config shape.
 - The runtime already parses several approval-related config blocks, but deploy, terraform, microfrontend, auto-tag, and release-stage approval gates are not currently enforced by the execution code.
 - `deploy.autoPromote` is normalized and validated, but it is not currently used by `DeployPipeline`.
 

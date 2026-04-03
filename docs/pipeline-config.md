@@ -7,6 +7,7 @@ The shared library expects a `.ci/ci.yml` file at the root of each service repos
 | --- | --- | --- |
 | `version` | `number` | Schema version. Only `1` is supported. |
 | `preset` | `string` | Build preset (`node`, `pnpm`, `java-gradle`). Optional when a `build.pnpm` block is present. |
+| `recipe` | `string` | Optional explicit recipe override: `build`, `package`, `image`, `service`, `microfrontend`, or `terraform`. |
 | `agent` | `map` | Jenkins agent selector (`label`, `docker`). |
 | `build` | `map` | Custom build stages or preset overrides. |
 | `image` | `map/boolean` | Docker build/push configuration. Set to `false` to disable container workflows. |
@@ -14,6 +15,22 @@ The shared library expects a `.ci/ci.yml` file at the root of each service repos
 | `terraform` | `map` | Infrastructure orchestration settings. |
 | `microfrontend` | `map` | Publish MFEs to CDN buckets with environment gates. |
 | `release` | `map` | Auto-tag + GitHub release automation. |
+
+## Recipe Selection
+
+`ciV1` now resolves an internal recipe before it runs the recipe-specific stages.
+
+- If `recipe` is set, that value is used and validated against the config shape.
+- If `recipe` is omitted, the library auto-detects one of:
+  - `terraform`
+  - `microfrontend`
+  - `service`
+  - `image`
+  - `package`
+  - `build`
+- Unsupported mixed shapes fail fast. For example, combining Terraform environments with Helm deploy environments in one config is no longer accepted.
+
+Use `recipe` only when you want to make intent explicit or avoid relying on auto-detection. Existing compatible configs do not need to add it.
 
 ## Build Section
 ```yaml

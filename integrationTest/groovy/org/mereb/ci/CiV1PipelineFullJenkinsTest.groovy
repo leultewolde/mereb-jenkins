@@ -66,14 +66,13 @@ class CiV1PipelineFullJenkinsTest extends BasePipelineTest {
     }
 
     @Test
-    void "ciV1 runs docker build, terraform, deploy, and smoke"() {
+    void "ciV1 runs the service recipe with docker, deploy, and smoke"() {
         def script = loadScript('vars/ciV1.groovy')
 
         script.call(configPath: '.ci/ci.yml')
 
         assertTrue(stages.any { it.contains('Docker Build') })
         assertTrue(stages.contains('Deploy Dev'))
-        assertTrue(stages.any { it.contains('Terraform DEV') })
         assertFalse(helmCalls.isEmpty())
         Map helmArgs = helmCalls.first()
         assertEquals('ghcr.io/mereb/app', helmArgs.release)
@@ -105,14 +104,6 @@ class CiV1PipelineFullJenkinsTest extends BasePipelineTest {
                     smoke      : [
                         url        : 'https://dev.api.local/ping',
                         environment: 'Dev smoke'
-                    ]
-                ]
-            ],
-            terraform: [
-                environments: [
-                    dev: [
-                        displayName: 'DEV',
-                        when       : '!pr'
                     ]
                 ]
             ],
