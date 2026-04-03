@@ -21,7 +21,7 @@ Internally, `ciV1` now resolves a recipe and dispatches to a recipe-specific exe
 
 Internal users interact with this project directly:
 
-- Repository maintainers define `.ci/ci.yml` and call `ciV1(...)` from their Jenkinsfile.
+- Repository maintainers define `.ci/ci.mjc` and call `ciV1(...)` from their Jenkinsfile.
 - Platform and release engineers manage credentials, clusters, registries, Terraform backends, and release policies.
 - Jenkins operators maintain the controller, agents, plugins, and shared library registration.
 
@@ -40,7 +40,7 @@ Typical Jenkinsfile usage:
 @Library('mereb-jenkins') _
 
 ciV1(
-  configPath: '.ci/ci.yml',
+  configPath: '.ci/ci.mjc',
   bootstrapLabel: 'ubuntu-lts'
 )
 ```
@@ -49,7 +49,7 @@ ciV1(
 
 At a high level the library behaves like this:
 
-1. Bootstrap on a Jenkins node, check out source, and locate `.ci/ci.yml` (falling back to legacy `ci.yml` if present).
+1. Bootstrap on a Jenkins node, check out source, and locate `.ci/ci.mjc` (falling back to legacy `.ci/ci.yml` and `ci.yml` if present).
 2. Validate the raw config with `ConfigValidator` and normalize it with `ConfigNormalizer`.
 3. Resolve a recipe from the config shape or optional explicit `recipe` field.
 4. Freeze trigger behavior with `DeliveryPolicy` and compute runtime state with `PipelineStateFactory`.
@@ -78,17 +78,19 @@ Two delivery styles are supported:
 ## Project Structure
 
 ```text
-mereb-jenkins/
+pipeline-configs/
+  mereb-jenkins/
   vars/                  Jenkins shared-library entrypoints
   src/org/mereb/ci/      Testable pipeline modules
   docs/                  Config and design documentation
   test/groovy/           Unit tests
   integrationTest/groovy/ Jenkins integration tests
+  mereb-jenkins-schema-pluign/ IntelliJ support for Mereb config files
 ```
 
 ## Configuration
 
-Repository consumers configure the library with `.ci/ci.yml`. The most important docs are:
+Repository consumers configure the library with YAML-backed Mereb config files. The preferred filename is `.ci/ci.mjc`, while legacy `.ci/ci.yml` and `ci.yml` paths still work. The most important docs are:
 
 - [`docs/pipeline-config.md`](docs/pipeline-config.md): human-readable config guide
 - [`docs/ci.schema.json`](docs/ci.schema.json): schema for validation and editor tooling
@@ -96,6 +98,7 @@ Repository consumers configure the library with `.ci/ci.yml`. The most important
 - [`docs/architecture.md`](docs/architecture.md): architectural design of this library
 - [`docs/behavior-design.md`](docs/behavior-design.md): runtime behavior and actor interaction design
 - [`docs/ai-client.md`](docs/ai-client.md): optional AI suggestion integration
+- [`../mereb-jenkins-schema-pluign/README.md`](../mereb-jenkins-schema-pluign/README.md): `Mereb Jenkins Helper` IntelliJ editor support for `.ci/ci.mjc`
 
 Minimal example:
 
@@ -122,7 +125,7 @@ deploy:
 
 ## Current Behavior Notes
 
-- `.ci/ci.yml` is the primary config path. Legacy `ci.yml` fallback still exists in the runtime.
+- `.ci/ci.mjc` is the primary config path. Legacy `.ci/ci.yml` and `ci.yml` fallbacks still exist in the runtime.
 - `recipe` is optional. When omitted, `ciV1` auto-detects the internal executor from the config shape.
 - The runtime already parses several approval-related config blocks, but deploy, terraform, microfrontend, auto-tag, and release-stage approval gates are not currently enforced by the execution code.
 - `deploy.autoPromote` is normalized and validated, but it is not currently used by `DeployPipeline`.

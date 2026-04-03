@@ -8,7 +8,7 @@ This document describes how the shared library behaves at runtime today, includi
 
 ### Direct users
 
-- Repository maintainers trigger behavior indirectly through `.ci/ci.yml` and Jenkinsfile usage.
+- Repository maintainers trigger behavior indirectly through `.ci/ci.mjc` or a supported legacy YAML filename plus Jenkinsfile usage.
 - Release and platform engineers interact through credentials, registries, clusters, buckets, and release settings.
 - Jenkins administrators operate the runtime environment.
 
@@ -55,7 +55,7 @@ The pipeline first resolves config, then freezes delivery behavior through `Deli
 `ciV1` runs on a bootstrap node and:
 
 - checks out SCM
-- locates `.ci/ci.yml` or legacy `ci.yml`
+- locates `.ci/ci.mjc`, `.ci/ci.yml`, or legacy `ci.yml`
 - reads YAML
 - validates `version`
 - collects base environment variables from `env:`
@@ -307,12 +307,12 @@ These are notable mismatches between config surface and runtime behavior:
 
 1. Approval config is modeled broadly, but approval gates are not actually executed in deploy, Terraform, microfrontend, auto-tag, or release stages.
 2. `deploy.autoPromote` is normalized and validated, but has no effect.
-3. Legacy `ci.yml` fallback still exists, even though `.ci/ci.yml` is the intended primary path.
+3. Legacy `.ci/ci.yml` and `ci.yml` fallbacks still exist, even though `.ci/ci.mjc` is the intended primary path.
 4. Existing documentation in older files may imply approval behavior that the current runtime does not implement.
 
 ## Practical Summary
 
-For internal users, this library is a declarative CI/CD engine driven by `.ci/ci.yml`.
+For internal users, this library is a declarative CI/CD engine driven by `.ci/ci.mjc`.
 
 For external end users, the observable behavior is indirect:
 

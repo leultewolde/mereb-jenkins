@@ -36,7 +36,7 @@ The shared library includes a minimal AI abstraction so future releases can auto
        return new NullAiClient()
    }
    ```
-4. **Pass config in `.ci/ci.yml`** (optional keys; safe defaults remain no-op):
+4. **Pass config in `.ci/ci.mjc`** (optional keys; safe defaults remain no-op):
    ```yaml
    ai:
      provider: my-ai

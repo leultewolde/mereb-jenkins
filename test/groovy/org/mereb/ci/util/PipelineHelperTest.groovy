@@ -7,15 +7,33 @@ class PipelineHelperTest {
 
     @Test
     void "prefers primary config path when present"() {
+        FakeSteps steps = new FakeSteps(existing: ['.ci/ci.mjc'])
+        PipelineHelper helper = new PipelineHelper(steps)
+
+        assertEquals('.ci/ci.mjc', helper.locateConfig(['.ci/ci.mjc', '.ci/ci.yml', 'ci.yml']))
+        assertEquals(['.ci/ci.mjc'], steps.fileChecks)
+    }
+
+    @Test
+    void "falls back to project yaml config before root legacy config"() {
         FakeSteps steps = new FakeSteps(existing: ['.ci/ci.yml'])
         PipelineHelper helper = new PipelineHelper(steps)
 
-        assertEquals('.ci/ci.yml', helper.locateConfig('.ci/ci.yml', 'ci.yml'))
-        assertEquals(['.ci/ci.yml'], steps.fileChecks)
+        assertEquals('.ci/ci.yml', helper.locateConfig(['.ci/ci.mjc', '.ci/ci.yml', 'ci.yml']))
+        assertEquals(['.ci/ci.mjc', '.ci/ci.yml'], steps.fileChecks)
     }
 
     @Test
     void "falls back to legacy config"() {
+        FakeSteps steps = new FakeSteps(existing: ['ci.yml'])
+        PipelineHelper helper = new PipelineHelper(steps)
+
+        assertEquals('ci.yml', helper.locateConfig(['.ci/ci.mjc', '.ci/ci.yml', 'ci.yml']))
+        assertEquals(['.ci/ci.mjc', '.ci/ci.yml', 'ci.yml'], steps.fileChecks)
+    }
+
+    @Test
+    void "supports the legacy two-path overload"() {
         FakeSteps steps = new FakeSteps(existing: ['ci.yml'])
         PipelineHelper helper = new PipelineHelper(steps)
 

@@ -38,7 +38,9 @@ class CiV1PipelineFullJenkinsTest extends BasePipelineTest {
         helper.registerAllowedMethod('node', [String, Closure]) { String label, Closure body -> body() }
         helper.registerAllowedMethod('checkout', [Map]) { }
         helper.registerAllowedMethod('checkout', [Object]) { }
-        helper.registerAllowedMethod('fileExists', [String]) { String path -> path == '.ci/ci.yml' || path.startsWith('.ci/values-dev') }
+        helper.registerAllowedMethod('fileExists', [String]) { String path ->
+            path == '.ci/ci.mjc' || path == '.ci/ci.yml' || path.startsWith('.ci/values-dev')
+        }
         helper.registerAllowedMethod('readYaml', [Map]) { Map args -> integrationConfig() }
         helper.registerAllowedMethod('pwd', []) { '/workspace' }
         helper.registerAllowedMethod('sh', [String]) { String script -> shCalls << script; respondToShell(script) }

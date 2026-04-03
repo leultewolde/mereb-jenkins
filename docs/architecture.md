@@ -12,7 +12,7 @@ The system does not expose an end-user web interface or API. It is an internal d
 
 | Actor | Role |
 | --- | --- |
-| Repository maintainer | Adds `.ci/ci.yml`, writes Jenkinsfile, and chooses pipeline behavior |
+| Repository maintainer | Adds `.ci/ci.mjc` (or a supported legacy YAML filename), writes Jenkinsfile, and chooses pipeline behavior |
 | Release or platform engineer | Manages release credentials, deployment targets, Terraform settings, and operational policy |
 | Jenkins controller and agents | Execute the shared library and all external tools |
 | External systems | Git, Docker registries, Kubernetes clusters, Helm repos, Terraform providers, Vault, S3-compatible storage, GitHub, optional AI endpoint |
@@ -45,16 +45,20 @@ Jenkinsfile
   -> vars/ciV1.groovy
      -> ConfigValidator
      -> ConfigNormalizer
+     -> RecipeResolver
      -> DeliveryPolicy
      -> PipelineStateFactory
-     -> BuildStages / VerbRunner
-     -> AiFactory / AiClient
-     -> DockerPipeline
-     -> ReleaseOrchestrator
-        -> TerraformPipeline
-        -> DeployPipeline
-        -> MicrofrontendPipeline
-        -> ReleaseFlow / ReleaseCoordinator
+     -> RecipeServicesFactory
+     -> CommonPipelineExecutor
+        -> BuildStages / VerbRunner
+        -> AiFactory / AiClient
+     -> RecipeExecutorFactory
+        -> PackageRecipeExecutor
+        -> ImageRecipeExecutor
+        -> ServiceRecipeExecutor
+        -> MicrofrontendRecipeExecutor
+        -> TerraformRecipeExecutor
+        -> BuildRecipeExecutor
      -> PipelineHelper cleanup
 ```
 
@@ -125,7 +129,7 @@ This layer is intentionally separate from stage execution so the rest of the pip
 
 ### 1. Repository config ingestion
 
-Input comes from a consumer repository's `.ci/ci.yml`. `ciV1` reads it in a bootstrap node and stashes the workspace.
+Input comes from a consumer repository's `.ci/ci.mjc` file, or a supported legacy YAML filename. `ciV1` reads it in a bootstrap node and stashes the workspace.
 
 ### 2. Validation and normalization
 
@@ -191,6 +195,6 @@ Integration tests under `integrationTest/groovy/` provide Jenkins-oriented cover
 - The schema and normalizer expose a richer approval surface than the current runtime actually executes.
 - `approvalHandler` is injected into Terraform and microfrontend orchestration, but approval gates are not currently invoked.
 - Deploy environments carry `autoPromote` and `approval` metadata, but `DeployPipeline` does not consume them.
-- Legacy `ci.yml` fallback still exists even though `.ci/ci.yml` is the canonical path.
+- Legacy `.ci/ci.yml` and `ci.yml` fallbacks still exist even though `.ci/ci.mjc` is the canonical path.
 
 These are behavior gaps, not just documentation gaps, and they are called out more explicitly in [`behavior-design.md`](behavior-design.md).

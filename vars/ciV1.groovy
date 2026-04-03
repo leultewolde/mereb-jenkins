@@ -14,8 +14,9 @@ import org.mereb.ci.recipe.RecipeType
 import static org.mereb.ci.util.PipelineUtils.*
 import java.util.UUID
 
-@Field final String PRIMARY_CONFIG = '.ci/ci.yml'
-@Field final String LEGACY_CONFIG  = 'ci.yml'
+@Field final String PRIMARY_CONFIG = '.ci/ci.mjc'
+@Field final List<String> LEGACY_CONFIGS = ['.ci/ci.yml', 'ci.yml']
+@Field final List<String> SUPPORTED_CONFIGS = [PRIMARY_CONFIG] + LEGACY_CONFIGS
 @Field final List<String> DEFAULT_ENV_ORDER = ['dev', 'stg', 'prd', 'prod']
 
 def call(Map args = [:]) {
@@ -33,12 +34,12 @@ def call(Map args = [:]) {
                 error "Pipeline configuration '${configPath}' not found."
             }
         } else {
-            configPath = pipelineHelper.locateConfig(PRIMARY_CONFIG, LEGACY_CONFIG)
+            configPath = pipelineHelper.locateConfig(SUPPORTED_CONFIGS)
             if (!configPath) {
-                error "Pipeline configuration not found. Add ${PRIMARY_CONFIG}"
+                error "Pipeline configuration not found. Add ${PRIMARY_CONFIG} (YAML)."
             }
-            if (configPath == LEGACY_CONFIG) {
-                echo "[DEPRECATION] Found legacy pipeline file '${LEGACY_CONFIG}'. Support will be removed in December 2024 — migrate to ${PRIMARY_CONFIG}."
+            if (LEGACY_CONFIGS.contains(configPath)) {
+                echo "ciV1 config notice: using legacy pipeline file '${configPath}'. Prefer ${PRIMARY_CONFIG} for new configs."
             }
         }
         rawCfg = readYaml(file: configPath) ?: [:]
@@ -57,10 +58,10 @@ def call(Map args = [:]) {
         }
     }
     if (validation.hasErrors()) {
-        error "Invalid ${PRIMARY_CONFIG}: ${validation.errors.join('; ')}"
+        error "Invalid pipeline configuration '${configPath ?: PRIMARY_CONFIG}': ${validation.errors.join('; ')}"
     }
 
-    Map cfg = ConfigNormalizer.normalize(rawCfg, DEFAULT_ENV_ORDER, PRIMARY_CONFIG)
+    Map cfg = ConfigNormalizer.normalize(rawCfg, DEFAULT_ENV_ORDER, configPath ?: PRIMARY_CONFIG)
     Map deliveryEnv = [
         BRANCH_NAME: env.BRANCH_NAME ?: '',
         CHANGE_ID  : env.CHANGE_ID ?: '',

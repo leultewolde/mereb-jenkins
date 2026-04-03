@@ -28,7 +28,7 @@ class CiV1PipelineJenkinsTest extends BasePipelineTest {
         helper.registerAllowedMethod('node', [String, Closure]) { String label, Closure body -> body() }
         helper.registerAllowedMethod('checkout', [Map]) { }
         helper.registerAllowedMethod('checkout', [Object]) { }
-        helper.registerAllowedMethod('fileExists', [String]) { String path -> path == '.ci/ci.yml' }
+        helper.registerAllowedMethod('fileExists', [String]) { String path -> path == '.ci/ci.mjc' || path == '.ci/ci.yml' }
         helper.registerAllowedMethod('readYaml', [Map]) { Map args ->
             [
                 version: 1,
@@ -74,6 +74,16 @@ class CiV1PipelineJenkinsTest extends BasePipelineTest {
         def script = loadScript('vars/ciV1.groovy')
 
         script.call(configPath: '.ci/ci.yml')
+
+        assertFalse(withEnvCalls.isEmpty())
+        assertTrue(withEnvCalls.flatten().contains('HOME=/workspace'))
+    }
+
+    @Test
+    void "ciV1 discovers .ci/ci.mjc when configPath is omitted"() {
+        def script = loadScript('vars/ciV1.groovy')
+
+        script.call()
 
         assertFalse(withEnvCalls.isEmpty())
         assertTrue(withEnvCalls.flatten().contains('HOME=/workspace'))

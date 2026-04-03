@@ -12,14 +12,17 @@ class PipelineHelper implements Serializable {
         this.approvalHelper = new ApprovalHelper(steps)
     }
 
-    String locateConfig(String primary, String legacy) {
-        if (steps.fileExists(primary)) {
-            return primary
-        }
-        if (steps.fileExists(legacy)) {
-            return legacy
+    String locateConfig(List<String> candidates) {
+        for (String candidate : candidates ?: []) {
+            if (candidate && steps.fileExists(candidate)) {
+                return candidate
+            }
         }
         return null
+    }
+
+    String locateConfig(String primary, String legacy) {
+        return locateConfig([primary, legacy])
     }
 
     String determineHome(String workspace) {

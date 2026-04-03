@@ -3,8 +3,9 @@ package org.mereb.ci.config
 import org.mereb.ci.recipe.RecipeCompatibilityValidator
 
 /**
- * Lightweight structural validation for .ci/ci.yml. Not a full JSON Schema parser,
- * but enough to fail fast with actionable messages.
+ * Lightweight structural validation for Mereb Jenkins YAML config files such as
+ * .ci/ci.mjc, .ci/ci.yml, and ci.yml. Not a full JSON Schema parser, but enough
+ * to fail fast with actionable messages.
  */
 class ConfigValidator implements Serializable {
 

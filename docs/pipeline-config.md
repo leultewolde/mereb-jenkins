@@ -1,6 +1,6 @@
 # Pipeline Configuration Guide
 
-The shared library expects a `.ci/ci.yml` file at the root of each service repository. This document expands on [`docs/ci.schema.json`](ci.schema.json) with human-readable explanations and examples.
+The shared library expects a YAML-backed Mereb config file in each repository. The preferred filename is `.ci/ci.mjc`; legacy `.ci/ci.yml` and `ci.yml` are still supported. This document expands on [`docs/ci.schema.json`](ci.schema.json) with human-readable explanations and examples.
 
 ## Top-Level Keys
 | Key | Type | Description |
@@ -226,5 +226,5 @@ Defaults:
 
 ## Validation & Migration
 - The library emits warnings and fails fast if the config violates the schema.
-- `.ci/ci.yml` is the primary config path. Legacy `ci.yml` fallback still exists in the runtime and still emits a deprecation warning.
+- `.ci/ci.mjc` is the primary config path. Legacy `.ci/ci.yml` and `ci.yml` still work.
 - For detailed tips on moving from the v0 pipelines, read [`migration-v1.md`](migration-v1.md).
