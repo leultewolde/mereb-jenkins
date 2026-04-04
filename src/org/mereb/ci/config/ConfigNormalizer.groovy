@@ -556,7 +556,7 @@ class ConfigNormalizer implements Serializable {
         for (Object entryObj : deploySection.entrySet()) {
             Map.Entry entry = entryObj as Map.Entry
             Object key = entry.key
-            if ('order'.equals(key)) {
+            if ('order'.equals(key) || !(entry.value instanceof Map)) {
                 continue
             }
             Map envCfg = mapCopy(entry.value)

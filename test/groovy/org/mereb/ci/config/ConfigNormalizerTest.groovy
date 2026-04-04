@@ -59,6 +59,29 @@ class ConfigNormalizerTest {
     }
 
     @Test
+    void "ignores non-map deploy metadata entries"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                order       : ['dev'],
+                chartVersion: '0.1.1',
+                dev         : [
+                    chart: 'app-chart',
+                    version: '0.1.1'
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev'], '.ci/ci.yml')
+
+        assertEquals(['dev'], cfg.deploy.order)
+        assertNotNull(cfg.deploy.environments.dev)
+        assertFalse(cfg.deploy.environments.containsKey('chartVersion'))
+        assertEquals('0.1.1', cfg.deploy.environments.dev.chartVersion)
+    }
+
+    @Test
     void "normalizes release autoTag credentialId into credential map"() {
         Map raw = [
             version: 1,
