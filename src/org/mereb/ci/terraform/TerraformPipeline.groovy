@@ -65,12 +65,13 @@ class TerraformPipeline implements Serializable {
             List<String> envList = []
             envList.addAll(globalEnv)
             envList.addAll(mapToEnvList(envCfg.env))
+            String vaultAddress = resolveVaultAddress(tfCfg, envCfg)
 
             Map<String, String> backend = [:]
             backend.putAll(globalBackend ?: [:])
             backend.putAll(envCfg.backend ?: [:])
 
-            List<Map> bindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
+            List<Map> bindings = credentialHelper.bindingsFor(envCfg, vaultAddress)
             Closure rollout = {
                 stageExecutor.run("Terraform ${envCfg.displayName}", envList, bindings) {
                     steps.dir(basePath) {
@@ -120,7 +121,7 @@ class TerraformPipeline implements Serializable {
                         Map payload = [:]
                         payload.putAll(smoke)
                         payload.environment = envCfg.displayName
-                        List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg, envCfg?.vault?.url)
+                        List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg, vaultAddress)
                         Closure smokeRun = {
                             steps.runSmoke(payload)
                         }
@@ -165,6 +166,53 @@ class TerraformPipeline implements Serializable {
         } catch (MissingMethodException | NoSuchMethodError err) {
             steps.error("terraform lock: Jenkins 'lock' step is unavailable for resource '${resource}'. Install/configure the Lockable Resources plugin.")
         }
+    }
+
+    private String resolveVaultAddress(Map tfCfg, Map envCfg) {
+        String raw = firstNonBlank(
+            envVarFromMap(envCfg?.env, 'VAULT_ADDR'),
+            vaultUrl(envCfg?.vault),
+            envVarFromMap(tfCfg?.env, 'VAULT_ADDR'),
+            vaultUrl(tfCfg?.vault),
+            resolveEnvVar(steps, 'VAULT_ADDR')
+        )
+        return normalizeVaultAddress(raw)
+    }
+
+    private static String envVarFromMap(Object envCfg, String name) {
+        if (!(envCfg instanceof Map) || !name) {
+            return null
+        }
+        Object value = (envCfg as Map).get(name)
+        return value == null ? null : value.toString()
+    }
+
+    private static String vaultUrl(Object vaultCfg) {
+        if (!(vaultCfg instanceof Map)) {
+            return null
+        }
+        Object value = (vaultCfg as Map).get('url') ?: (vaultCfg as Map).get('baseUrl')
+        return value == null ? null : value.toString()
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value?.trim()) {
+                return value.trim()
+            }
+        }
+        return null
+    }
+
+    private static String normalizeVaultAddress(String raw) {
+        if (!raw?.trim()) {
+            return null
+        }
+        String addr = raw.trim()
+        if (!addr.contains('://')) {
+            addr = "https://${addr}"
+        }
+        return addr.replaceAll(/\/+$/, '')
     }
 
     private void runTerraformCommands(String binary, Map tfCfg, Map envCfg, Map backend, Map vars) {

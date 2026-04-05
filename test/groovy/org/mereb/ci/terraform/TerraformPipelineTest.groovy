@@ -152,6 +152,33 @@ class TerraformPipelineTest {
         assertEquals([0], callbackLockDepths)
     }
 
+    @Test
+    void "passes terraform level VAULT_ADDR to vault token credential bindings"() {
+        FakeSteps steps = new FakeSteps()
+        FakeCredentialHelper credentialHelper = new FakeCredentialHelper(steps)
+        TerraformPipeline pipeline = new TerraformPipeline(steps, credentialHelper, new StageExecutor(steps, credentialHelper), null)
+
+        Map cfg = [
+            enabled     : true,
+            path        : 'terraform',
+            env         : [VAULT_ADDR: 'https://vault.leultewolde.com/'],
+            environments: [
+                dev: [
+                    displayName: 'DEV',
+                    when       : '!pr',
+                    credentials: [[type: 'string', id: 'vault-credentials', env: 'VAULT_TOKEN']]
+                ]
+            ]
+        ]
+
+        pipeline.run(cfg)
+
+        assertFalse(credentialHelper.bindingCalls.isEmpty())
+        assertEquals('https://vault.leultewolde.com', credentialHelper.bindingCalls[0].vaultAddr)
+        assertEquals('VaultTokenCredentialBinding', credentialHelper.bindingCalls[0].bindings[0].$class)
+        assertEquals('https://vault.leultewolde.com', credentialHelper.bindingCalls[0].bindings[0].vaultAddr)
+    }
+
     private static class FakeSteps {
         Map env = [BRANCH_NAME: 'main', CHANGE_ID: '', TAG_NAME: '', HOME: '/home/jenkins']
         List<String> stageNames = []
@@ -237,10 +264,18 @@ class TerraformPipelineTest {
 
     private static class FakeCredentialHelper extends CredentialHelper {
         private final def steps
+        final List<Map> bindingCalls = []
 
         FakeCredentialHelper(def steps) {
             super(steps)
             this.steps = steps
+        }
+
+        @Override
+        List<Map> bindingsFor(Map cfg, String vaultAddr = null) {
+            List<Map> bindings = super.bindingsFor(cfg, vaultAddr)
+            bindingCalls << [cfg: cfg, vaultAddr: vaultAddr, bindings: bindings]
+            return bindings
         }
 
         @Override
