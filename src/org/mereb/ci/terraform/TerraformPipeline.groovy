@@ -109,6 +109,16 @@ class TerraformPipeline implements Serializable {
                     }
                 }
 
+                Map postApply = envCfg.postApply ?: [:]
+                if (postApply.url || postApply.script || postApply.command) {
+                    stageExecutor.run("Post Apply ${envCfg.displayName}", envList, bindings) {
+                        Map payload = [:]
+                        payload.putAll(postApply)
+                        payload.environment = envCfg.displayName
+                        steps.runSmoke(payload)
+                    }
+                }
+
                 if (envCfg.verify?.resources) {
                     stageExecutor.run("Verify ${envCfg.displayName}", envList, bindings) {
                         verifier.run(envCfg)

@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*
 class TerraformPipelineTest {
 
     @Test
-    void "runs verify stage before smoke and configures plugin cache"() {
+    void "runs post-apply, verify, and smoke stages in order and configures plugin cache"() {
         FakeSteps steps = new FakeSteps()
         FakeCredentialHelper credentialHelper = new FakeCredentialHelper(steps)
         TerraformPipeline pipeline = new TerraformPipeline(steps, credentialHelper, new StageExecutor(steps, credentialHelper), null)
@@ -23,6 +23,7 @@ class TerraformPipelineTest {
                     when       : '!pr',
                     path       : 'envs/dev',
                     planOut    : 'tfplan-dev',
+                    postApply  : [script: 'echo sync manifests'],
                     verify     : [
                         timeout  : '90s',
                         resources: [
@@ -36,13 +37,15 @@ class TerraformPipelineTest {
 
         pipeline.run(cfg)
 
-        assertEquals(['Terraform DEV', 'Verify DEV', 'Smoke DEV'], steps.stageNames)
+        assertEquals(['Terraform DEV', 'Post Apply DEV', 'Verify DEV', 'Smoke DEV'], steps.stageNames)
         assertTrue(steps.lockCalls.isEmpty())
         assertTrue(steps.envs.flatten().any { it == 'TF_PLUGIN_CACHE_DIR=/workspace/.ci/tf-cache' })
         assertTrue(steps.shCalls.any { it.contains("mkdir -p '/workspace/.ci/tf-cache'") })
         assertTrue(steps.shCalls.any { it.contains("'terraform' plan") })
         assertTrue(steps.shCalls.any { it.contains('kubectl') && it.contains('wait') && it.contains('Available') })
-        assertEquals(['DEV'], steps.smokeCalls*.environment)
+        assertEquals(['DEV', 'DEV'], steps.smokeCalls*.environment)
+        assertEquals('echo sync manifests', steps.smokeCalls[0].script)
+        assertEquals('echo smoke', steps.smokeCalls[1].script)
     }
 
     @Test
@@ -201,6 +204,30 @@ class TerraformPipelineTest {
         pipeline.run(cfg)
 
         assertEquals(['VAULT_ADDR=https://vault.leultewolde.com'], steps.stageEnvCalls['Smoke DEV'])
+    }
+
+    @Test
+    void "post-apply stage inherits terraform env values"() {
+        FakeSteps steps = new FakeSteps()
+        FakeCredentialHelper credentialHelper = new FakeCredentialHelper(steps)
+        TerraformPipeline pipeline = new TerraformPipeline(steps, credentialHelper, new StageExecutor(steps, credentialHelper), null)
+
+        Map cfg = [
+            enabled     : true,
+            path        : 'terraform',
+            env         : [VAULT_ADDR: 'https://vault.leultewolde.com'],
+            environments: [
+                dev: [
+                    displayName: 'DEV',
+                    when       : '!pr',
+                    postApply  : [script: 'echo sync']
+                ]
+            ]
+        ]
+
+        pipeline.run(cfg)
+
+        assertEquals(['VAULT_ADDR=https://vault.leultewolde.com'], steps.stageEnvCalls['Post Apply DEV'])
     }
 
     private static class FakeSteps {

@@ -425,6 +425,7 @@ class ConfigNormalizer implements Serializable {
             approval    : normalizeApproval(data.get('approval') ?: data.get('approve')),
             credentials : data.get('credentials') instanceof List ? data.get('credentials') : [],
             lock        : normalizeTerraformLock(data.get('lock')),
+            postApply   : normalizeSmoke(data.get('postApply') ?: data.get('postDeploy')),
             verify      : normalizeTerraformVerify(data.get('verify')),
             smoke       : normalizeSmoke(data.get('smoke'))
         ]
