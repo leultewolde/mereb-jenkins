@@ -179,21 +179,53 @@ class TerraformPipelineTest {
         assertEquals('https://vault.leultewolde.com', credentialHelper.bindingCalls[0].bindings[0].vaultAddr)
     }
 
+    @Test
+    void "smoke stage inherits terraform env values"() {
+        FakeSteps steps = new FakeSteps()
+        FakeCredentialHelper credentialHelper = new FakeCredentialHelper(steps)
+        TerraformPipeline pipeline = new TerraformPipeline(steps, credentialHelper, new StageExecutor(steps, credentialHelper), null)
+
+        Map cfg = [
+            enabled     : true,
+            path        : 'terraform',
+            env         : [VAULT_ADDR: 'https://vault.leultewolde.com'],
+            environments: [
+                dev: [
+                    displayName: 'DEV',
+                    when       : '!pr',
+                    smoke      : [script: 'echo smoke']
+                ]
+            ]
+        ]
+
+        pipeline.run(cfg)
+
+        assertEquals(['VAULT_ADDR=https://vault.leultewolde.com'], steps.stageEnvCalls['Smoke DEV'])
+    }
+
     private static class FakeSteps {
         Map env = [BRANCH_NAME: 'main', CHANGE_ID: '', TAG_NAME: '', HOME: '/home/jenkins']
         List<String> stageNames = []
         List<List<String>> envs = []
+        Map<String, List<String>> stageEnvCalls = [:]
         List<String> shCalls = []
         List<Map> smokeCalls = []
         List<String> lockCalls = []
         Map<String, Integer> stageLockDepths = [:]
         int activeLocks = 0
         String selectorOutput = 'deployment/apollo-router'
+        private String currentStage
 
         void stage(String name, Closure body) {
             stageNames << name
             stageLockDepths[name] = activeLocks
-            body()
+            String previousStage = currentStage
+            currentStage = name
+            try {
+                body()
+            } finally {
+                currentStage = previousStage
+            }
         }
 
         void lock(Map args, Closure body) {
@@ -206,6 +238,9 @@ class TerraformPipelineTest {
 
         void withEnv(List<String> envList, Closure body) {
             envs << envList.collect { it.toString() }
+            if (currentStage) {
+                stageEnvCalls[currentStage] = envList.collect { it.toString() }
+            }
             body()
         }
 

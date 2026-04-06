@@ -117,15 +117,11 @@ class TerraformPipeline implements Serializable {
 
                 Map smoke = envCfg.smoke ?: [:]
                 if (smoke.url || smoke.script || smoke.command) {
-                    steps.stage("Smoke ${envCfg.displayName}") {
+                    stageExecutor.run("Smoke ${envCfg.displayName}", envList, bindings) {
                         Map payload = [:]
                         payload.putAll(smoke)
                         payload.environment = envCfg.displayName
-                        List<Map> smokeBindings = credentialHelper.bindingsFor(envCfg, vaultAddress)
-                        Closure smokeRun = {
-                            steps.runSmoke(payload)
-                        }
-                        credentialHelper.withOptionalCredentials(smokeBindings, smokeRun)
+                        steps.runSmoke(payload)
                     }
                 }
             }
