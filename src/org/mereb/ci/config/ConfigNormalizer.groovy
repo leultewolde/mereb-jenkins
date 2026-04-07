@@ -633,6 +633,7 @@ class ConfigNormalizer implements Serializable {
                 }
             }
         }
+        Map generatedValues = normalizeGeneratedValues(envCfg.get('generatedValues'))
 
         Map result = [
             name           : name,
@@ -668,7 +669,50 @@ class ConfigNormalizer implements Serializable {
             result.restartWorkloads = true
         }
 
+        if (!generatedValues.isEmpty()) {
+            result.generatedValues = generatedValues
+        }
+
         return result
+    }
+
+    private static Map normalizeGeneratedValues(Object raw) {
+        if (!(raw instanceof Map)) {
+            return [:]
+        }
+
+        Map cfg = mapCopy(raw)
+        Map result = [:]
+        String profile = asString(cfg.get('profile'))
+        if (profile) {
+            result.profile = profile
+        }
+
+        Object overlay = normalizeHelmValue(cfg.get('overlay'))
+        if (overlay instanceof Map && !((Map) overlay).isEmpty()) {
+            result.overlay = overlay
+        }
+
+        return result
+    }
+
+    private static Object normalizeHelmValue(Object raw) {
+        if (raw instanceof Map) {
+            Map<String, Object> normalized = [:]
+            ((Map) raw).each { Object key, Object value ->
+                if (key != null) {
+                    normalized[key.toString()] = normalizeHelmValue(value)
+                }
+            }
+            return normalized
+        }
+        if (raw instanceof List) {
+            return ((List) raw).collect { Object item -> normalizeHelmValue(item) }
+        }
+        if (raw instanceof GString) {
+            return raw.toString()
+        }
+        return raw
     }
 
     private static String defaultConditionFor(String envName) {

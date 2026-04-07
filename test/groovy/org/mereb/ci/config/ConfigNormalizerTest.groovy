@@ -59,6 +59,35 @@ class ConfigNormalizerTest {
     }
 
     @Test
+    void "normalizes generated values overlays for deploy environments"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                dev_outbox: [
+                    chart         : 'app-chart',
+                    valuesFiles   : ['.ci/values-dev.yaml'],
+                    generatedValues: [
+                        profile: 'outboxWorker',
+                        overlay: [
+                            deploymentStrategy: [
+                                type         : 'RollingUpdate',
+                                rollingUpdate: [maxSurge: 0, maxUnavailable: 1]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev', 'stg', 'prd'], '.ci/ci.mjc')
+
+        assertEquals('outboxWorker', cfg.deploy.environments.dev_outbox.generatedValues.profile)
+        assertEquals(0, cfg.deploy.environments.dev_outbox.generatedValues.overlay.deploymentStrategy.rollingUpdate.maxSurge)
+        assertEquals(1, cfg.deploy.environments.dev_outbox.generatedValues.overlay.deploymentStrategy.rollingUpdate.maxUnavailable)
+    }
+
+    @Test
     void "ignores non-map deploy metadata entries"() {
         Map raw = [
             version: 1,

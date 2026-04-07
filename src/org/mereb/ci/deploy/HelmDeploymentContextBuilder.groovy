@@ -6,13 +6,19 @@ package org.mereb.ci.deploy
 class HelmDeploymentContextBuilder implements Serializable {
 
     private final def steps
+    private final GeneratedValuesRenderer generatedValuesRenderer
 
     HelmDeploymentContextBuilder(def steps) {
         this.steps = steps
+        this.generatedValuesRenderer = new GeneratedValuesRenderer(steps)
     }
 
     HelmDeploymentContext build(String envName, Map envCfg, Map imageCfg, Map state) {
         List<String> valuesFiles = determineValuesFiles(envName, envCfg)
+        String generatedValuesFile = determineGeneratedValuesFile(envName, envCfg)
+        if (generatedValuesFile) {
+            valuesFiles << generatedValuesFile
+        }
 
         Map helmArgs = buildHelmArgs(envCfg, state, imageCfg, valuesFiles)
         return new HelmDeploymentContext(valuesFiles, helmArgs)
@@ -30,6 +36,13 @@ class HelmDeploymentContextBuilder implements Serializable {
             }
         }
         return valuesFiles
+    }
+
+    private String determineGeneratedValuesFile(String envName, Map envCfg) {
+        if (!(envCfg.generatedValues instanceof Map) || ((Map) envCfg.generatedValues).isEmpty()) {
+            return null
+        }
+        return generatedValuesRenderer.render(envName, (Map) envCfg.generatedValues)
     }
 
     private Map buildHelmArgs(Map envCfg, Map state, Map imageCfg, List<String> valuesFiles) {

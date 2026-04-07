@@ -149,6 +149,38 @@
       },
       "additionalProperties": true
     },
+    "helmValue": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/definitions/helmValue" }
+        },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/helmValue" }
+        }
+      ]
+    },
+    "helmValueObject": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/helmValue" }
+    },
+    "generatedValues": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["outboxWorker"]
+        },
+        "overlay": { "$ref": "#/definitions/helmValueObject" }
+      },
+      "required": ["profile"],
+      "additionalProperties": false
+    },
     "environments": {
       "type": "object",
       "properties": {
@@ -173,6 +205,7 @@
             "type": "array",
             "items": { "type": "string" }
           },
+          "generatedValues": { "$ref": "#/definitions/generatedValues" },
           "set": {
             "type": "object",
             "additionalProperties": { "type": "string" }

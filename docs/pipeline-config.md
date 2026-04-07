@@ -97,7 +97,32 @@ Each environment supports:
 - `repoCredentials` for private Helm repos.
 - `repoCredentials.usernameEnv` / `passwordEnv` to customize the env vars bound during deploys (defaults to `HELM_REPO_USERNAME` / `HELM_REPO_PASSWORD`).
 - `valuesFiles`, `set`, `setString`, `setFile` to tweak Helm releases.
+- `generatedValues` to append a generated Helm values overlay after checked-in `valuesFiles`.
 - `approval` and `autoPromote` keys are accepted by the config model, but the current `DeployPipeline` runtime does not enforce them yet.
+
+### Generated Values Overlays
+```yaml
+deploy:
+  dev_outbox:
+    release: svc-feed-dev-outbox
+    namespace: apps-dev
+    chart: app-chart
+    valuesFiles:
+      - .ci/values-dev.yaml
+    generatedValues:
+      profile: outboxWorker
+      overlay:
+        deploymentStrategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 0
+            maxUnavailable: 1
+```
+
+- `generatedValues.profile` currently supports `outboxWorker`.
+- `generatedValues.overlay` is a Helm values fragment merged on top of the profile defaults.
+- The library renders the merged result into a temporary workspace file and appends it after `valuesFiles`, so the generated overlay wins on conflicts.
+- Merge semantics are recursive for maps; arrays and scalar values replace the profile defaults wholesale.
 
 ## Terraform Section
 ```yaml

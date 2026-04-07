@@ -108,6 +108,44 @@ class DeployPipelineTest {
     }
 
     @Test
+    void "passes generated values overlays to helm deployments"() {
+        FakeSteps steps = new FakeSteps()
+        steps.files['.ci/values-dev.yaml'] = 'image: {}'
+        CredentialHelper credentialHelper = new CredentialHelper(steps)
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper)
+
+        Map envCfg = [
+                displayName    : 'DEV_OUTBOX',
+                namespace      : 'apps-dev',
+                release        : 'svc-feed-dev-outbox',
+                chart          : 'app-chart',
+                repo           : 'https://example.com/chart',
+                rolloutTimeout : '5m',
+                restartWorkloads: false,
+                when           : '',
+                valuesFiles    : ['.ci/values-dev.yaml'],
+                generatedValues: [
+                        profile: 'outboxWorker',
+                        overlay: [
+                                deploymentStrategy: [
+                                        type         : 'RollingUpdate',
+                                        rollingUpdate: [maxSurge: 0, maxUnavailable: 1]
+                                ]
+                        ]
+                ]
+        ]
+
+        pipeline.run([
+                image : [enabled: true],
+                deploy: [order: ['dev_outbox'], environments: [dev_outbox: envCfg]]
+        ], [repository: 'registry.leultewolde.com/mereb/svc-feed', imageTag: 'main-abc123'])
+
+        assertEquals(['.ci/values-dev.yaml', '.ci/.generated-values-dev_outbox.json'], steps.helmDeployCalls[0].valuesFiles)
+        assertTrue(steps.writes.containsKey('.ci/.generated-values-dev_outbox.json'))
+        assertTrue(steps.writes['.ci/.generated-values-dev_outbox.json'].contains('"outbox-relay"'))
+    }
+
+    @Test
     void "emits kubernetes diagnostics when rollout status fails"() {
         FakeSteps steps = new FakeSteps()
         steps.failScriptContains = "rollout status 'deployment/svc-feed-dev' --timeout='5m'"
