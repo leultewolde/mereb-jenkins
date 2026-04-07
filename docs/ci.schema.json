@@ -181,6 +181,64 @@
       "required": ["profile"],
       "additionalProperties": false
     },
+    "generatedBaseExtraEnv": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "string" },
+        "fromPlatformIdentityConfigKey": { "type": "string" },
+        "fromPlatformIdentitySecretKey": { "type": "string" },
+        "optional": { "type": "boolean" }
+      },
+      "required": ["name"],
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["value"] },
+        { "required": ["fromPlatformIdentityConfigKey"] },
+        { "required": ["fromPlatformIdentitySecretKey"] }
+      ]
+    },
+    "generatedBaseApiServiceInputs": {
+      "type": "object",
+      "properties": {
+        "serviceName": { "type": "string" },
+        "containerPort": { "type": "integer" },
+        "routePrefix": { "type": "string" },
+        "configMapName": { "type": "string" },
+        "secretName": { "type": "string" },
+        "tlsSecretName": { "type": "string" },
+        "secretTemplates": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "extraEnv": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/generatedBaseExtraEnv" }
+        }
+      },
+      "required": [
+        "serviceName",
+        "containerPort",
+        "routePrefix",
+        "configMapName",
+        "secretName",
+        "tlsSecretName",
+        "secretTemplates"
+      ],
+      "additionalProperties": false
+    },
+    "generatedBaseValues": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["apiService"]
+        },
+        "inputs": { "$ref": "#/definitions/generatedBaseApiServiceInputs" }
+      },
+      "required": ["profile", "inputs"],
+      "additionalProperties": false
+    },
     "environments": {
       "type": "object",
       "properties": {
@@ -205,6 +263,7 @@
             "type": "array",
             "items": { "type": "string" }
           },
+          "generatedBaseValues": { "$ref": "#/definitions/generatedBaseValues" },
           "generatedValues": { "$ref": "#/definitions/generatedValues" },
           "set": {
             "type": "object",

@@ -15,6 +15,11 @@ class HelmDeploymentContextBuilder implements Serializable {
 
     HelmDeploymentContext build(String envName, Map envCfg, Map imageCfg, Map state) {
         List<String> valuesFiles = determineValuesFiles(envName, envCfg)
+        String generatedBaseValuesFile = determineGeneratedBaseValuesFile(envName, envCfg)
+        if (generatedBaseValuesFile) {
+            valuesFiles = [generatedBaseValuesFile] + valuesFiles
+        }
+
         String generatedValuesFile = determineGeneratedValuesFile(envName, envCfg)
         if (generatedValuesFile) {
             valuesFiles << generatedValuesFile
@@ -38,11 +43,18 @@ class HelmDeploymentContextBuilder implements Serializable {
         return valuesFiles
     }
 
+    private String determineGeneratedBaseValuesFile(String envName, Map envCfg) {
+        if (!(envCfg.generatedBaseValues instanceof Map) || ((Map) envCfg.generatedBaseValues).isEmpty()) {
+            return null
+        }
+        return generatedValuesRenderer.renderBase(envName, envCfg.release?.toString(), (Map) envCfg.generatedBaseValues)
+    }
+
     private String determineGeneratedValuesFile(String envName, Map envCfg) {
         if (!(envCfg.generatedValues instanceof Map) || ((Map) envCfg.generatedValues).isEmpty()) {
             return null
         }
-        return generatedValuesRenderer.render(envName, (Map) envCfg.generatedValues)
+        return generatedValuesRenderer.renderOverlay(envName, (Map) envCfg.generatedValues)
     }
 
     private Map buildHelmArgs(Map envCfg, Map state, Map imageCfg, List<String> valuesFiles) {

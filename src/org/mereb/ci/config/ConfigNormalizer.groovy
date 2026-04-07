@@ -633,6 +633,7 @@ class ConfigNormalizer implements Serializable {
                 }
             }
         }
+        Map generatedBaseValues = normalizeGeneratedBaseValues(envCfg.get('generatedBaseValues'))
         Map generatedValues = normalizeGeneratedValues(envCfg.get('generatedValues'))
 
         Map result = [
@@ -669,8 +670,32 @@ class ConfigNormalizer implements Serializable {
             result.restartWorkloads = true
         }
 
+        if (!generatedBaseValues.isEmpty()) {
+            result.generatedBaseValues = generatedBaseValues
+        }
+
         if (!generatedValues.isEmpty()) {
             result.generatedValues = generatedValues
+        }
+
+        return result
+    }
+
+    private static Map normalizeGeneratedBaseValues(Object raw) {
+        if (!(raw instanceof Map)) {
+            return [:]
+        }
+
+        Map cfg = mapCopy(raw)
+        Map result = [:]
+        String profile = asString(cfg.get('profile'))
+        if (profile) {
+            result.profile = profile
+        }
+
+        Object inputs = normalizeHelmValue(cfg.get('inputs'))
+        if (inputs instanceof Map && !((Map) inputs).isEmpty()) {
+            result.inputs = inputs
         }
 
         return result

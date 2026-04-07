@@ -47,6 +47,50 @@ class HelmDeploymentContextBuilderTest {
         assertTrue(steps.writes['.ci/.generated-values-dev_outbox.json'].contains('"maxUnavailable"'))
     }
 
+    @Test
+    void "places generated base values before checked in values files and overlays after them"() {
+        FakeSteps steps = new FakeSteps(existing: ['.ci/values-dev.yaml'])
+        HelmDeploymentContextBuilder builder = new HelmDeploymentContextBuilder(steps)
+
+        Map envCfg = [
+            displayName        : 'DEV',
+            release            : 'svc-feed-dev',
+            valuesFiles        : ['.ci/values-dev.yaml'],
+            generatedBaseValues: [
+                profile: 'apiService',
+                inputs : [
+                    serviceName   : 'svc-feed',
+                    containerPort : 4002,
+                    routePrefix   : '/feed',
+                    configMapName : 'svc-feed-dev-config',
+                    secretName    : 'svc-feed-dev-secrets',
+                    tlsSecretName : 'feed-dev-tls',
+                    secretTemplates: [
+                        DATABASE_URL   : 'FEED_DATABASE_URL',
+                        SPLUNK_HEC_TOKEN: 'SPLUNK_HEC_TOKEN'
+                    ],
+                    extraEnv      : [
+                        [name: 'OIDC_ISSUER', fromPlatformIdentityConfigKey: 'OIDC_ISSUER']
+                    ]
+                ]
+            ],
+            generatedValues    : [
+                profile: 'outboxWorker'
+            ]
+        ]
+
+        HelmDeploymentContext context = builder.build('dev', envCfg, [enabled: true], [repository: 'repo', imageTag: 'tag'])
+
+        assertEquals(
+            ['.ci/.generated-base-values-dev.json', '.ci/values-dev.yaml', '.ci/.generated-values-dev.json'],
+            context.valuesFiles
+        )
+        assertTrue(steps.writes.containsKey('.ci/.generated-base-values-dev.json'))
+        assertTrue(steps.writes['.ci/.generated-base-values-dev.json'].contains('"svc-feed-dev-secrets"'))
+        assertTrue(steps.writes['.ci/.generated-base-values-dev.json'].contains('"api-dev.mereb.app"'))
+        assertTrue(steps.writes.containsKey('.ci/.generated-values-dev.json'))
+    }
+
     private static class FakeSteps {
         final Set<String> existing
         final Map<String, String> writes = [:]

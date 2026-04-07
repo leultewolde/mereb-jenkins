@@ -88,6 +88,45 @@ class ConfigNormalizerTest {
     }
 
     @Test
+    void "normalizes generated base values for deploy environments"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                dev: [
+                    chart              : 'app-chart',
+                    valuesFiles        : ['.ci/values-dev.yaml'],
+                    generatedBaseValues: [
+                        profile: 'apiService',
+                        inputs : [
+                            serviceName   : 'svc-feed',
+                            containerPort : 4002,
+                            routePrefix   : '/feed',
+                            configMapName : 'svc-feed-dev-config',
+                            secretName    : 'svc-feed-dev-secrets',
+                            tlsSecretName : 'feed-dev-tls',
+                            secretTemplates: [
+                                DATABASE_URL   : 'FEED_DATABASE_URL',
+                                SPLUNK_HEC_TOKEN: 'SPLUNK_HEC_TOKEN'
+                            ],
+                            extraEnv      : [
+                                [name: 'OIDC_ISSUER', fromPlatformIdentityConfigKey: 'OIDC_ISSUER']
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev', 'stg', 'prd'], '.ci/ci.mjc')
+
+        assertEquals('apiService', cfg.deploy.environments.dev.generatedBaseValues.profile)
+        assertEquals('svc-feed', cfg.deploy.environments.dev.generatedBaseValues.inputs.serviceName)
+        assertEquals(4002, cfg.deploy.environments.dev.generatedBaseValues.inputs.containerPort)
+        assertEquals('OIDC_ISSUER', cfg.deploy.environments.dev.generatedBaseValues.inputs.extraEnv[0].fromPlatformIdentityConfigKey)
+    }
+
+    @Test
     void "ignores non-map deploy metadata entries"() {
         Map raw = [
             version: 1,

@@ -97,8 +97,39 @@ Each environment supports:
 - `repoCredentials` for private Helm repos.
 - `repoCredentials.usernameEnv` / `passwordEnv` to customize the env vars bound during deploys (defaults to `HELM_REPO_USERNAME` / `HELM_REPO_PASSWORD`).
 - `valuesFiles`, `set`, `setString`, `setFile` to tweak Helm releases.
+- `generatedBaseValues` to prepend a generated Helm values base before checked-in `valuesFiles`.
 - `generatedValues` to append a generated Helm values overlay after checked-in `valuesFiles`.
 - `approval` and `autoPromote` keys are accepted by the config model, but the current `DeployPipeline` runtime does not enforce them yet.
+
+### Generated Base Values
+```yaml
+deploy:
+  dev:
+    release: svc-feed-dev
+    namespace: apps-dev
+    chart: app-chart
+    valuesFiles:
+      - .ci/values-dev.yaml
+    generatedBaseValues:
+      profile: apiService
+      inputs:
+        serviceName: svc-feed
+        containerPort: 4002
+        routePrefix: /feed
+        configMapName: svc-feed-dev-config
+        secretName: svc-feed-dev-secrets
+        tlsSecretName: feed-dev-tls
+        secretTemplates:
+          DATABASE_URL: FEED_DATABASE_URL
+          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
+        extraEnv:
+          - name: OIDC_ISSUER
+            fromPlatformIdentityConfigKey: OIDC_ISSUER
+```
+
+- `generatedBaseValues.profile` currently supports `apiService`.
+- `generatedBaseValues.inputs` captures conventional service metadata such as ingress route, service port, VSO secret mappings, and env vars sourced from the env-specific `platform-identity-*` ConfigMap or Secret.
+- The library renders the generated base into a temporary workspace file and prepends it before `valuesFiles`, so checked-in YAML still wins for service-specific overrides such as `configMap.data`, `resources`, `autoscaling`, and `deploymentStrategy`.
 
 ### Generated Values Overlays
 ```yaml

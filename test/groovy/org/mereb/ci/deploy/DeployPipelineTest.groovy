@@ -146,6 +146,54 @@ class DeployPipelineTest {
     }
 
     @Test
+    void "passes generated base values before checked in values files"() {
+        FakeSteps steps = new FakeSteps()
+        steps.files['.ci/values-dev.yaml'] = 'configMap:\n  data:\n    PORT: \"4002\"\n'
+        CredentialHelper credentialHelper = new CredentialHelper(steps)
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper)
+
+        Map envCfg = [
+                displayName        : 'DEV',
+                namespace          : 'apps-dev',
+                release            : 'svc-feed-dev',
+                chart              : 'app-chart',
+                repo               : 'https://example.com/chart',
+                rolloutTimeout     : '5m',
+                restartWorkloads   : false,
+                when               : '',
+                valuesFiles        : ['.ci/values-dev.yaml'],
+                generatedBaseValues: [
+                        profile: 'apiService',
+                        inputs : [
+                                serviceName   : 'svc-feed',
+                                containerPort : 4002,
+                                routePrefix   : '/feed',
+                                configMapName : 'svc-feed-dev-config',
+                                secretName    : 'svc-feed-dev-secrets',
+                                tlsSecretName : 'feed-dev-tls',
+                                secretTemplates: [
+                                        DATABASE_URL   : 'FEED_DATABASE_URL',
+                                        SPLUNK_HEC_TOKEN: 'SPLUNK_HEC_TOKEN'
+                                ],
+                                extraEnv      : [
+                                        [name: 'OIDC_ISSUER', fromPlatformIdentityConfigKey: 'OIDC_ISSUER']
+                                ]
+                        ]
+                ]
+        ]
+
+        pipeline.run([
+                image : [enabled: true],
+                deploy: [order: ['dev'], environments: [dev: envCfg]]
+        ], [repository: 'registry.leultewolde.com/mereb/svc-feed', imageTag: 'main-abc123'])
+
+        assertEquals(['.ci/.generated-base-values-dev.json', '.ci/values-dev.yaml'], steps.helmDeployCalls[0].valuesFiles)
+        assertTrue(steps.writes.containsKey('.ci/.generated-base-values-dev.json'))
+        assertTrue(steps.writes['.ci/.generated-base-values-dev.json'].contains('"svc-feed-dev-secrets"'))
+        assertTrue(steps.writes['.ci/.generated-base-values-dev.json'].contains('"api-dev.mereb.app"'))
+    }
+
+    @Test
     void "emits kubernetes diagnostics when rollout status fails"() {
         FakeSteps steps = new FakeSteps()
         steps.failScriptContains = "rollout status 'deployment/svc-feed-dev' --timeout='5m'"
