@@ -82,6 +82,26 @@ class ConfigNormalizerTest {
     }
 
     @Test
+    void "drops legacy deploy-side vault template fields"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                dev: [
+                    chart         : 'app-chart',
+                    vault         : [url: 'https://vault.example.com'],
+                    valuesTemplates: [[template: 'templates/values-secret.yaml.tpl', output: '.ci/.rendered/values-dev.secret.yaml']]
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev'], '.ci/ci.yml')
+
+        assertFalse(cfg.deploy.environments.dev.containsKey('vault'))
+        assertFalse(cfg.deploy.environments.dev.containsKey('valuesTemplates'))
+    }
+
+    @Test
     void "normalizes release autoTag credentialId into credential map"() {
         Map raw = [
             version: 1,

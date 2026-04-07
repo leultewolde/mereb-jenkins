@@ -3,8 +3,6 @@ package org.mereb.ci.deploy
 import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.delivery.DeliveryPolicy
-import org.mereb.ci.util.VaultCredentialHelper
-import org.mereb.ci.util.VaultContext
 
 import static org.mereb.ci.util.PipelineUtils.shellEscape
 
@@ -15,16 +13,12 @@ class DeployPipeline implements Serializable {
 
     private final def steps
     private final CredentialHelper credentialHelper
-    private final ValuesTemplateRenderer templateRenderer
-    private final VaultCredentialHelper vaultHelper
     private final HelmDeploymentContextBuilder contextBuilder
 
-    DeployPipeline(def steps, CredentialHelper credentialHelper, ValuesTemplateRenderer templateRenderer = null) {
+    DeployPipeline(def steps, CredentialHelper credentialHelper) {
         this.steps = steps
         this.credentialHelper = credentialHelper
-        this.templateRenderer = templateRenderer ?: new ValuesTemplateRenderer(steps)
-        this.vaultHelper = new VaultCredentialHelper(steps, credentialHelper)
-        this.contextBuilder = new HelmDeploymentContextBuilder(steps, this.templateRenderer, credentialHelper, vaultHelper)
+        this.contextBuilder = new HelmDeploymentContextBuilder(steps)
     }
 
     void run(Map cfg, Map state, Closure afterEnvCallback = null) {
@@ -49,9 +43,8 @@ class DeployPipeline implements Serializable {
                 return
             }
 
-            VaultContext vaultContext = vaultHelper.prepare(envCfg)
-            List<Map> deployBindings = vaultContext.bindings
-            HelmDeploymentContext deploymentContext = contextBuilder.build(envName, envCfg, cfg.image, state, vaultContext)
+            List<Map> deployBindings = credentialHelper.bindingsFor(envCfg)
+            HelmDeploymentContext deploymentContext = contextBuilder.build(envName, envCfg, cfg.image, state)
 
             steps.stage("Deploy ${envCfg.displayName}") {
                 Map helmArgs = deploymentContext.helmArgs
@@ -76,7 +69,7 @@ class DeployPipeline implements Serializable {
                 }
             }
 
-            runSmoke(envCfg, vaultContext)
+            runSmoke(envCfg, deployBindings)
 
             afterEnvCallback?.call(envName)
         }
@@ -132,7 +125,7 @@ ${kubectl} -n ${shellEscape(namespace)} create secret docker-registry ${shellEsc
         return Helpers.matchCondition(envCfg.when as String, steps.env)
     }
 
-    private void runSmoke(Map envCfg, VaultContext vaultContext) {
+    private void runSmoke(Map envCfg, List<Map> bindings) {
         Map smoke = envCfg.smoke ?: [:]
         if (!(smoke.url || smoke.script || smoke.command)) {
             return
@@ -141,13 +134,12 @@ ${kubectl} -n ${shellEscape(namespace)} create secret docker-registry ${shellEsc
             Map payload = [:]
             payload.putAll(smoke)
             payload.environment = envCfg.displayName
-            List<Map> smokeBindings = vaultContext.bindings
             Closure run = {
                 withKubernetesDiagnostics(envCfg, 'smoke', [:]) {
                     steps.runSmoke(payload)
                 }
             }
-            credentialHelper.withOptionalCredentials(smokeBindings, run)
+            credentialHelper.withOptionalCredentials(bindings, run)
         }
     }
 

@@ -597,8 +597,6 @@ class ConfigNormalizer implements Serializable {
         Map appCfg = mapCopy(appCfgRaw)
         Map smoke = normalizeSmoke(envCfg.get('smoke'))
         Map approval = normalizeApproval(envCfg.get('approve') ?: envCfg.get('approval'))
-        Map vaultCfg = mapCopy(envCfg.get('vault'))
-
         String display = asString(envCfg.get('displayName'))
         if (!display) {
             display = name.toUpperCase()
@@ -636,8 +634,6 @@ class ConfigNormalizer implements Serializable {
             }
         }
 
-        List<Map> valuesTemplates = normalizeValuesTemplates(envCfg.get('valuesTemplates'))
-
         Map result = [
             name           : name,
             displayName    : display,
@@ -663,9 +659,7 @@ class ConfigNormalizer implements Serializable {
             atomic         : envCfg.get('atomic') == null ? true : (envCfg.get('atomic') as Boolean),
             timeout        : asString(envCfg.get('timeout') ?: appCfg.get('timeout') ?: '10m'),
             rolloutTimeout : asString(envCfg.get('rolloutTimeout') ?: envCfg.get('timeout') ?: appCfg.get('timeout') ?: '10m'),
-            valuesTemplates: valuesTemplates,
-            credentials    : envCfg.get('credentials') instanceof List ? envCfg.get('credentials') : [],
-            vault          : vaultCfg
+            credentials    : envCfg.get('credentials') instanceof List ? envCfg.get('credentials') : []
         ]
 
         if (envCfg.containsKey('restartWorkloads')) {
@@ -692,33 +686,6 @@ class ConfigNormalizer implements Serializable {
             default:
                 return '!pr'
         }
-    }
-
-    private static List<Map> normalizeValuesTemplates(Object raw) {
-        if (!(raw instanceof List)) {
-            return []
-        }
-        List<Map> templates = []
-        for (Object entry : (List) raw) {
-            if (!(entry instanceof Map)) {
-                continue
-            }
-            Map data = mapCopy(entry as Map)
-            String templatePath = asString(data.get('template') ?: data.get('path'))
-            if (!templatePath) {
-                continue
-            }
-            String outputPath = asString(data.get('output') ?: data.get('destination'))
-            Map vars = data.get('vars') instanceof Map ? mapCopy(data.get('vars')) : [:]
-            Map vault = data.get('vault') instanceof Map ? mapCopy(data.get('vault')) : [:]
-            templates << [
-                template: templatePath,
-                output  : outputPath,
-                vars    : vars,
-                vault   : vault
-            ]
-        }
-        return templates
     }
 
     private static Map normalizeSmoke(Object raw) {

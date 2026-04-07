@@ -1,33 +1,28 @@
 import org.junit.jupiter.api.Test
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.deploy.DeployPipeline
-import org.mereb.ci.deploy.ValuesTemplateRenderer
 
 import static org.junit.jupiter.api.Assertions.*
 
 class DeployPipelineTest {
 
     @Test
-    void "renders values templates with credentials bound for vault tokens"() {
+    void "uses checked-in values files and binds optional credentials for deploy and smoke"() {
         FakeSteps steps = new FakeSteps()
-        StubRenderer renderer = new StubRenderer(steps)
+        steps.files['.ci/values-dev.yaml'] = 'image: {}'
         CredentialHelper credentialHelper = new CredentialHelper(steps)
-        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper, renderer)
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper)
 
         Map envCfg = [
-                displayName    : 'DEV',
-                namespace      : 'apps-dev',
-                release        : 'svc-feed-dev',
-                chart          : 'app-chart',
-                repo           : 'https://example.com/chart',
-                rolloutTimeout : '5m',
-                when           : '',
-                valuesTemplates: [[
-                        template: 'templates/values-secret.yaml.tpl',
-                        output  : '.ci/.rendered/values-dev.secret.yaml',
-                        vault   : [url: 'vault.dev']
-                ]],
-                credentials    : [[type: 'string', id: 'vault-credentials', env: 'VAULT_TOKEN']]
+                displayName   : 'DEV',
+                namespace     : 'apps-dev',
+                release       : 'svc-feed-dev',
+                chart         : 'app-chart',
+                repo          : 'https://example.com/chart',
+                rolloutTimeout: '5m',
+                when          : '',
+                smoke         : [url: 'https://api-dev.mereb.app/healthz'],
+                credentials   : [[type: 'string', id: 'api-token', env: 'API_TOKEN']]
         ]
 
         pipeline.run([
@@ -35,12 +30,12 @@ class DeployPipelineTest {
                 deploy: [order: ['dev'], environments: [dev: envCfg]]
         ], [repository: 'registry.leultewolde.com/mereb/svc-feed', imageTag: 'main-abc123'])
 
-        assertEquals(1, renderer.renderCalls)
-        assertEquals('.ci/.rendered/values-dev.secret.yaml', renderer.lastOutput)
         assertTrue(steps.withCredentialsBindings.any { bindings ->
-            bindings.any { (it.variable ?: it.tokenVariable) == 'VAULT_TOKEN' && it.credentialsId == 'vault-credentials' }
-        }, 'Expected vault credentials to be bound during template rendering')
-        assertTrue(steps.withEnvCalls.any { it.VAULT_ADDR == 'https://vault.dev' }, 'Expected VAULT_ADDR to be set during render')
+            bindings.any { (it.variable ?: it.tokenVariable) == 'API_TOKEN' && it.credentialsId == 'api-token' }
+        }, 'Expected explicit deploy credentials to be bound')
+        assertEquals(['.ci/values-dev.yaml'], steps.helmDeployCalls[0].valuesFiles)
+        assertEquals(1, steps.runSmokeCalls.size())
+        assertEquals('secret-api-token', steps.runSmokeCalls[0].env.API_TOKEN.toString())
         assertTrue(steps.shScripts.any { it.contains("kubectl -n 'apps-dev' get deployment -l 'app.kubernetes.io/instance=svc-feed-dev' -o name") })
         assertTrue(steps.shScripts.any { it.contains("kubectl -n 'apps-dev' rollout restart 'deployment/svc-feed-dev'") })
         assertTrue(steps.shScripts.any { it.contains("kubectl -n 'apps-dev' rollout status 'deployment/svc-feed-dev' --timeout='5m'") })
@@ -51,7 +46,7 @@ class DeployPipelineTest {
     void "creates registry pull secret before helm deployment"() {
         FakeSteps steps = new FakeSteps()
         CredentialHelper credentialHelper = new CredentialHelper(steps)
-        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper, new ValuesTemplateRenderer(steps))
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper)
 
         Map envCfg = [
                 displayName   : 'DEV',
@@ -90,7 +85,7 @@ class DeployPipelineTest {
     void "skips live artifact verification when all workloads are scaled to zero"() {
         FakeSteps steps = new FakeSteps()
         CredentialHelper credentialHelper = new CredentialHelper(steps)
-        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper, new ValuesTemplateRenderer(steps))
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper)
 
         Map envCfg = [
                 displayName   : 'DEV_OUTBOX',
@@ -118,7 +113,7 @@ class DeployPipelineTest {
         steps.failScriptContains = "rollout status 'deployment/svc-feed-dev' --timeout='5m'"
         steps.failure = new RuntimeException("rollout failed")
         CredentialHelper credentialHelper = new CredentialHelper(steps)
-        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper, new ValuesTemplateRenderer(steps))
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper)
 
         Map envCfg = [
                 displayName    : 'DEV',
@@ -146,28 +141,6 @@ class DeployPipelineTest {
         assertTrue(steps.shScripts.any { it.contains("logs 'svc-feed-dev-abc' --all-containers=true --tail=200") })
     }
 
-    private static class StubRenderer extends ValuesTemplateRenderer {
-        final FakeSteps stepsRef
-        int renderCalls = 0
-        String lastOutput
-
-        StubRenderer(FakeSteps steps) {
-            super(steps)
-            this.stepsRef = steps
-        }
-
-        @Override
-        List<String> render(String envName, Map envCfg) {
-            renderCalls++
-            if (!stepsRef.env.VAULT_TOKEN) {
-                throw new RuntimeException("VAULT_TOKEN missing during render")
-            }
-            lastOutput = envCfg.valuesTemplates?.first()?.output ?: '.ci/.rendered/out.yaml'
-            stepsRef.writes[lastOutput] = 'rendered'
-            return [lastOutput]
-        }
-    }
-
     private static class FakeSteps {
         final Map env = [BRANCH_NAME: 'main', CHANGE_ID: '']
         final Map<String, String> files = [:]
@@ -175,6 +148,7 @@ class DeployPipelineTest {
         final List<List<Map>> withCredentialsBindings = []
         final List<String> shScripts = []
         final List<Map> helmDeployCalls = []
+        final List<Map> runSmokeCalls = []
         final List<Map<String, String>> withEnvCalls = []
         String failScriptContains
         RuntimeException failure
@@ -199,6 +173,13 @@ class DeployPipelineTest {
 
         void helmDeploy(Map args) {
             helmDeployCalls << new LinkedHashMap(args)
+        }
+
+        void runSmoke(Map args) {
+            runSmokeCalls << [
+                    args: new LinkedHashMap(args),
+                    env : new LinkedHashMap(env)
+            ]
         }
 
         Map usernamePassword(Map args) {

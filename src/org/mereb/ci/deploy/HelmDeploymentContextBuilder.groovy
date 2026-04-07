@@ -1,45 +1,21 @@
 package org.mereb.ci.deploy
 
-import org.mereb.ci.credentials.CredentialHelper
-import org.mereb.ci.util.VaultCredentialHelper
-import org.mereb.ci.util.VaultContext
-
 /**
  * Handles values-file resolution and Helm argument construction for deployment stages.
  */
 class HelmDeploymentContextBuilder implements Serializable {
 
     private final def steps
-    private final ValuesTemplateRenderer templateRenderer
-    private final CredentialHelper credentialHelper
-    private final VaultCredentialHelper vaultHelper
 
-    HelmDeploymentContextBuilder(def steps,
-                                 ValuesTemplateRenderer templateRenderer,
-                                 CredentialHelper credentialHelper,
-                                 VaultCredentialHelper vaultHelper) {
+    HelmDeploymentContextBuilder(def steps) {
         this.steps = steps
-        this.templateRenderer = templateRenderer
-        this.credentialHelper = credentialHelper
-        this.vaultHelper = vaultHelper
     }
 
-    HelmDeploymentContext build(String envName, Map envCfg, Map imageCfg, Map state, VaultContext vaultContext) {
+    HelmDeploymentContext build(String envName, Map envCfg, Map imageCfg, Map state) {
         List<String> valuesFiles = determineValuesFiles(envName, envCfg)
-        List<String> renderedTemplates = []
-        Closure renderTemplates = {
-            renderedTemplates = templateRenderer.render(envName, envCfg)
-        }
-        VaultContext ctx = vaultContext ?: new VaultContext(null, [])
-        vaultHelper.withVaultEnv(ctx.address, {
-            credentialHelper.withOptionalCredentials(ctx.bindings, renderTemplates)
-        })
-        List<String> finalValues = []
-        finalValues.addAll(valuesFiles)
-        finalValues.addAll(renderedTemplates)
 
-        Map helmArgs = buildHelmArgs(envCfg, state, imageCfg, finalValues)
-        return new HelmDeploymentContext(finalValues, helmArgs)
+        Map helmArgs = buildHelmArgs(envCfg, state, imageCfg, valuesFiles)
+        return new HelmDeploymentContext(valuesFiles, helmArgs)
     }
 
     private List<String> determineValuesFiles(String envName, Map envCfg) {
