@@ -72,11 +72,14 @@ def call(Map args = [:]) {
     Map agent = cfg.agent
 
     if (!deliveryPolicy.shouldRunPipeline()) {
-        echo deliveryPolicy.skipReason()
+        String skipReason = deliveryPolicy.skipReason()
+        echo skipReason
         try {
-            currentBuild.result = 'NOT_BUILT'
+            // Intentionally skipped runs should not fail GitHub status contexts.
+            currentBuild.result = 'SUCCESS'
+            currentBuild.description = "Skipped: ${skipReason}"
         } catch (Throwable ignored) {
-            echo 'Unable to set currentBuild.result to NOT_BUILT in this context.'
+            echo 'Unable to mark skipped build as SUCCESS in this context.'
         }
         return
     }

@@ -78,7 +78,7 @@ Outside the bootstrap node, `ConfigValidator` reports warnings and fails fast on
 
 ### 3. Delivery-policy gate
 
-`DeliveryPolicy` decides whether the pipeline should run at all. If not, the build is marked `NOT_BUILT` and exits early.
+`DeliveryPolicy` decides whether the pipeline should run at all. If not, the build logs the skip reason, is marked `SUCCESS`, and exits early so intentionally skipped branch jobs do not fail GitHub status contexts.
 
 ### 4. Main execution node
 

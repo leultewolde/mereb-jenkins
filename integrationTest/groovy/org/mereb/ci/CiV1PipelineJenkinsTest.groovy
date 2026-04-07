@@ -96,7 +96,8 @@ class CiV1PipelineJenkinsTest extends BasePipelineTest {
 
         script.call(configPath: '.ci/ci.yml')
 
-        assertEquals('NOT_BUILT', currentBuild.result)
+        assertEquals('SUCCESS', currentBuild.result)
+        assertTrue(currentBuild.description.contains('Skipping build for branch'))
         assertTrue(withEnvCalls.isEmpty())
         assertTrue(stages.isEmpty())
     }
@@ -120,7 +121,8 @@ class CiV1PipelineJenkinsTest extends BasePipelineTest {
 
         script.call(configPath: '.ci/ci.yml')
 
-        assertEquals('NOT_BUILT', currentBuild.result)
+        assertEquals('SUCCESS', currentBuild.result)
+        assertTrue(currentBuild.description.contains('Skipping staged tag build'))
         assertTrue(withEnvCalls.isEmpty())
         assertTrue(stages.isEmpty())
     }
