@@ -12,6 +12,8 @@ import static org.mereb.ci.util.PipelineUtils.toStringMap
  */
 class ConfigNormalizer implements Serializable {
 
+    private static final Set<String> RESERVED_DEPLOY_KEYS = ['order', 'defaults', 'generatedBaseDefaults'] as Set<String>
+
     static Map normalize(Map raw, List<String> defaultEnvOrder, String primaryConfig) {
         Map source = mapCopy(raw)
         Map cfg = [:]
@@ -552,16 +554,20 @@ class ConfigNormalizer implements Serializable {
             deploySection = mapCopy(source.get('environments'))
         }
         Map appCfg = mapCopy(source.get('app'))
-        Map envs = [:]
-
+        Map deployDefaults = normalizeDeployDefaults(deploySection.get('defaults'))
+        Map generatedBaseDefaults = normalizeGeneratedBaseValues(deploySection.get('generatedBaseDefaults'))
+        Map<String, Map> rawEnvironments = [:]
         for (Object entryObj : deploySection.entrySet()) {
             Map.Entry entry = entryObj as Map.Entry
             Object key = entry.key
-            if ('order'.equals(key) || !(entry.value instanceof Map)) {
+            if (RESERVED_DEPLOY_KEYS.contains(key?.toString()) || !(entry.value instanceof Map)) {
                 continue
             }
-            Map envCfg = mapCopy(entry.value)
-            String name = asString(key)
+            rawEnvironments.put(asString(key), mapCopy(entry.value))
+        }
+        Map envs = [:]
+        for (String name : rawEnvironments.keySet()) {
+            Map envCfg = resolveDeployEnvironment(name, rawEnvironments, deployDefaults, generatedBaseDefaults, new LinkedHashSet<String>())
             envs.put(name, normalizeEnvironment(name, envCfg, appCfg))
         }
 
@@ -590,6 +596,46 @@ class ConfigNormalizer implements Serializable {
             order       : order,
             environments: envs
         ]
+    }
+
+    private static Map resolveDeployEnvironment(
+        String name,
+        Map<String, Map> rawEnvironments,
+        Map deployDefaults,
+        Map generatedBaseDefaults,
+        LinkedHashSet<String> resolving
+    ) {
+        if (!rawEnvironments.containsKey(name)) {
+            throw new IllegalArgumentException("Unknown deploy environment '${name}'")
+        }
+        if (!resolving.add(name)) {
+            List<String> cycle = new ArrayList<>(resolving)
+            cycle << name
+            throw new IllegalArgumentException("Deploy environment extends cycle detected: ${cycle.join(' -> ')}")
+        }
+
+        try {
+            Map rawEnv = mapCopy(rawEnvironments.get(name))
+            Map<String, Object> merged = [:]
+            String parentName = asString(rawEnv.remove('extends'))
+            if (parentName) {
+                if (!rawEnvironments.containsKey(parentName)) {
+                    throw new IllegalArgumentException("Deploy environment '${name}' extends unknown environment '${parentName}'")
+                }
+                merged = deepMerge(merged, resolveDeployEnvironment(parentName, rawEnvironments, deployDefaults, generatedBaseDefaults, resolving))
+            }
+
+            merged = deepMerge(merged, rawEnv)
+            if (!deployDefaults.isEmpty()) {
+                merged = deepMerge(deployDefaults, merged)
+            }
+            if (!generatedBaseDefaults.isEmpty() && merged.get('generatedBaseValues') instanceof Map) {
+                merged.put('generatedBaseValues', deepMerge(generatedBaseDefaults, merged.get('generatedBaseValues') as Map))
+            }
+            return merged
+        } finally {
+            resolving.remove(name)
+        }
     }
 
     private static Map normalizeEnvironment(String name, Map envCfgRaw, Map appCfgRaw) {
@@ -701,6 +747,56 @@ class ConfigNormalizer implements Serializable {
         return result
     }
 
+    private static Map normalizeDeployDefaults(Object raw) {
+        if (!(raw instanceof Map)) {
+            return [:]
+        }
+
+        Map cfg = mapCopy(raw)
+        Map result = [:]
+        for (String key : ['chart', 'repo', 'repoCredentialId', 'repoCredential', 'repoUsername', 'repoPassword', 'timeout', 'rolloutTimeout']) {
+            String value = asString(cfg.get(key))
+            if (value) {
+                result.put(key, value)
+            }
+        }
+        if (cfg.containsKey('wait')) {
+            result.wait = cfg.get('wait') as Boolean
+        }
+        if (cfg.containsKey('atomic')) {
+            result.atomic = cfg.get('atomic') as Boolean
+        }
+
+        Map repoCredentials = normalizeRepoCredentials(cfg.get('repoCredentials'))
+        if (!repoCredentials.isEmpty()) {
+            result.repoCredentials = repoCredentials
+        }
+
+        return result
+    }
+
+    private static Map normalizeRepoCredentials(Object raw) {
+        if (!(raw instanceof Map)) {
+            return [:]
+        }
+
+        Map cfg = mapCopy(raw)
+        Map result = [:]
+        String id = asString(cfg.get('id'))
+        if (id) {
+            result.id = id
+        }
+        String usernameEnv = asString(cfg.get('usernameEnv') ?: cfg.get('usernameVariable'))
+        if (usernameEnv) {
+            result.usernameEnv = usernameEnv
+        }
+        String passwordEnv = asString(cfg.get('passwordEnv') ?: cfg.get('passwordVariable'))
+        if (passwordEnv) {
+            result.passwordEnv = passwordEnv
+        }
+        return result
+    }
+
     private static Map normalizeGeneratedValues(Object raw) {
         if (!(raw instanceof Map)) {
             return [:]
@@ -738,6 +834,31 @@ class ConfigNormalizer implements Serializable {
             return raw.toString()
         }
         return raw
+    }
+
+    private static Map<String, Object> deepMerge(Map left, Map right) {
+        Map<String, Object> merged = [:]
+        Set<String> keys = new LinkedHashSet<>()
+        keys.addAll(left.keySet()*.toString())
+        keys.addAll(right.keySet()*.toString())
+        for (String key : keys) {
+            boolean hasLeft = left.containsKey(key)
+            boolean hasRight = right.containsKey(key)
+            if (hasLeft && hasRight) {
+                Object leftValue = left.get(key)
+                Object rightValue = right.get(key)
+                if (leftValue instanceof Map && rightValue instanceof Map) {
+                    merged.put(key, deepMerge((Map) leftValue, (Map) rightValue))
+                } else {
+                    merged.put(key, normalizeHelmValue(rightValue))
+                }
+            } else if (hasRight) {
+                merged.put(key, normalizeHelmValue(right.get(key)))
+            } else {
+                merged.put(key, normalizeHelmValue(left.get(key)))
+            }
+        }
+        return merged
     }
 
     private static String defaultConditionFor(String envName) {

@@ -127,6 +127,176 @@ class ConfigNormalizerTest {
     }
 
     @Test
+    void "merges deploy defaults and generated base defaults into environments"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                defaults             : [
+                    chart           : 'app-chart',
+                    repo            : 'https://charts.leultewolde.com',
+                    repoCredentialId: 'helm-chart-creds',
+                    wait            : true,
+                    atomic          : true,
+                    timeout         : '15m'
+                ],
+                generatedBaseDefaults: [
+                    profile: 'apiService',
+                    inputs : [
+                        serviceName   : 'svc-feed',
+                        containerPort : 4002,
+                        routePrefix   : '/feed',
+                        secretTemplates: [
+                            DATABASE_URL   : 'FEED_DATABASE_URL',
+                            SPLUNK_HEC_TOKEN: 'SPLUNK_HEC_TOKEN'
+                        ],
+                        extraEnv      : [
+                            [name: 'OIDC_ISSUER', fromPlatformIdentityConfigKey: 'OIDC_ISSUER']
+                        ]
+                    ]
+                ],
+                dev                  : [
+                    release            : 'svc-feed-dev',
+                    namespace          : 'apps-dev',
+                    valuesFiles        : ['.ci/values-dev.yaml'],
+                    generatedBaseValues: [
+                        inputs: [
+                            configMapName: 'svc-feed-dev-config',
+                            secretName   : 'svc-feed-dev-secrets',
+                            tlsSecretName: 'feed-dev-tls'
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev', 'stg', 'prd'], '.ci/ci.mjc')
+
+        assertEquals('app-chart', cfg.deploy.environments.dev.chart)
+        assertEquals('https://charts.leultewolde.com', cfg.deploy.environments.dev.repo)
+        assertEquals('helm-chart-creds', cfg.deploy.environments.dev.repoCredentials.id)
+        assertTrue(cfg.deploy.environments.dev.wait as Boolean)
+        assertTrue(cfg.deploy.environments.dev.atomic as Boolean)
+        assertEquals('15m', cfg.deploy.environments.dev.timeout)
+        assertEquals('apiService', cfg.deploy.environments.dev.generatedBaseValues.profile)
+        assertEquals('svc-feed', cfg.deploy.environments.dev.generatedBaseValues.inputs.serviceName)
+        assertEquals('svc-feed-dev-config', cfg.deploy.environments.dev.generatedBaseValues.inputs.configMapName)
+        assertEquals('OIDC_ISSUER', cfg.deploy.environments.dev.generatedBaseValues.inputs.extraEnv[0].fromPlatformIdentityConfigKey)
+    }
+
+    @Test
+    void "extends inherits the parent environment and allows smoke false to clear inherited smoke"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                generatedBaseDefaults: [
+                    profile: 'apiService',
+                    inputs : [
+                        serviceName   : 'svc-feed',
+                        containerPort : 4002,
+                        routePrefix   : '/feed',
+                        secretTemplates: [
+                            DATABASE_URL: 'FEED_DATABASE_URL'
+                        ]
+                    ]
+                ],
+                dev                  : [
+                    release            : 'svc-feed-dev',
+                    namespace          : 'apps-dev',
+                    valuesFiles        : ['.ci/values-dev.yaml'],
+                    smoke              : [
+                        url    : 'https://api-dev.mereb.app/feed/healthz',
+                        retries: 3
+                    ],
+                    generatedBaseValues: [
+                        inputs: [
+                            configMapName: 'svc-feed-dev-config',
+                            secretName   : 'svc-feed-dev-secrets',
+                            tlsSecretName: 'feed-dev-tls'
+                        ]
+                    ]
+                ],
+                dev_outbox           : [
+                    extends        : 'dev',
+                    smoke          : false,
+                    release        : 'svc-feed-dev-outbox',
+                    generatedValues: [
+                        profile: 'outboxWorker'
+                    ]
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev', 'dev_outbox'], '.ci/ci.mjc')
+
+        assertEquals('apps-dev', cfg.deploy.environments.dev_outbox.namespace)
+        assertEquals(['.ci/values-dev.yaml'], cfg.deploy.environments.dev_outbox.valuesFiles)
+        assertTrue(cfg.deploy.environments.dev_outbox.smoke.isEmpty())
+        assertEquals('apiService', cfg.deploy.environments.dev_outbox.generatedBaseValues.profile)
+        assertEquals('svc-feed-dev-config', cfg.deploy.environments.dev_outbox.generatedBaseValues.inputs.configMapName)
+        assertEquals('outboxWorker', cfg.deploy.environments.dev_outbox.generatedValues.profile)
+    }
+
+    @Test
+    void "extends replaces arrays wholesale when overriding a parent environment"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                dev       : [
+                    valuesFiles: ['.ci/values-dev.yaml', '.ci/values-common.yaml']
+                ],
+                dev_outbox: [
+                    extends   : 'dev',
+                    valuesFiles: ['.ci/values-dev.yaml']
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev', 'dev_outbox'], '.ci/ci.mjc')
+
+        assertEquals(['.ci/values-dev.yaml'], cfg.deploy.environments.dev_outbox.valuesFiles)
+    }
+
+    @Test
+    void "fails fast when deploy extends references an unknown environment"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                dev_outbox: [
+                    extends: 'missing'
+                ]
+            ]
+        ]
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException) {
+            ConfigNormalizer.normalize(raw, ['dev', 'dev_outbox'], '.ci/ci.mjc')
+        }
+
+        assertTrue(ex.message.contains("extends unknown environment 'missing'"))
+    }
+
+    @Test
+    void "fails fast when deploy extends creates a cycle"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                dev      : [extends: 'dev_outbox'],
+                dev_outbox: [extends: 'dev']
+            ]
+        ]
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException) {
+            ConfigNormalizer.normalize(raw, ['dev', 'dev_outbox'], '.ci/ci.mjc')
+        }
+
+        assertTrue(ex.message.contains('extends cycle detected'))
+    }
+
+    @Test
     void "ignores non-map deploy metadata entries"() {
         Map raw = [
             version: 1,

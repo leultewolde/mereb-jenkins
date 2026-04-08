@@ -1,4 +1,5 @@
 import org.junit.jupiter.api.Test
+import org.mereb.ci.config.ConfigNormalizer
 import org.mereb.ci.deploy.HelmDeploymentContext
 import org.mereb.ci.deploy.HelmDeploymentContextBuilder
 
@@ -89,6 +90,63 @@ class HelmDeploymentContextBuilderTest {
         assertTrue(steps.writes['.ci/.generated-base-values-dev.json'].contains('"svc-feed-dev-secrets"'))
         assertTrue(steps.writes['.ci/.generated-base-values-dev.json'].contains('"api-dev.mereb.app"'))
         assertTrue(steps.writes.containsKey('.ci/.generated-values-dev.json'))
+    }
+
+    @Test
+    void "keeps generated base first and overlay last after deploy defaults and extends are normalized"() {
+        FakeSteps steps = new FakeSteps(existing: ['.ci/values-dev.yaml'])
+        HelmDeploymentContextBuilder builder = new HelmDeploymentContextBuilder(steps)
+        Map cfg = ConfigNormalizer.normalize([
+            version: 1,
+            image  : false,
+            deploy : [
+                defaults             : [
+                    chart           : 'app-chart',
+                    repo            : 'https://charts.leultewolde.com',
+                    repoCredentialId: 'helm-chart-creds'
+                ],
+                generatedBaseDefaults: [
+                    profile: 'apiService',
+                    inputs : [
+                        serviceName   : 'svc-feed',
+                        containerPort : 4002,
+                        routePrefix   : '/feed',
+                        secretTemplates: [
+                            DATABASE_URL: 'FEED_DATABASE_URL'
+                        ]
+                    ]
+                ],
+                dev                  : [
+                    release            : 'svc-feed-dev',
+                    namespace          : 'apps-dev',
+                    valuesFiles        : ['.ci/values-dev.yaml'],
+                    generatedBaseValues: [
+                        inputs: [
+                            configMapName: 'svc-feed-dev-config',
+                            secretName   : 'svc-feed-dev-secrets',
+                            tlsSecretName: 'feed-dev-tls'
+                        ]
+                    ]
+                ],
+                dev_outbox           : [
+                    extends        : 'dev',
+                    release        : 'svc-feed-dev-outbox',
+                    smoke          : false,
+                    generatedValues: [
+                        profile: 'outboxWorker'
+                    ]
+                ]
+            ]
+        ], ['dev', 'dev_outbox'], '.ci/ci.mjc')
+
+        HelmDeploymentContext context = builder.build('dev_outbox', cfg.deploy.environments.dev_outbox as Map, [enabled: true], [repository: 'repo', imageTag: 'tag'])
+
+        assertEquals(
+            ['.ci/.generated-base-values-dev_outbox.json', '.ci/values-dev.yaml', '.ci/.generated-values-dev_outbox.json'],
+            context.valuesFiles
+        )
+        assertTrue(steps.writes['.ci/.generated-base-values-dev_outbox.json'].contains('"svc-feed-dev-secrets"'))
+        assertTrue(steps.writes['.ci/.generated-values-dev_outbox.json'].contains('"outbox-relay"'))
     }
 
     private static class FakeSteps {

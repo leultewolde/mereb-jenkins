@@ -227,6 +227,26 @@
       ],
       "additionalProperties": false
     },
+    "generatedBaseApiServiceInputsPartial": {
+      "type": "object",
+      "properties": {
+        "serviceName": { "type": "string" },
+        "containerPort": { "type": "integer" },
+        "routePrefix": { "type": "string" },
+        "configMapName": { "type": "string" },
+        "secretName": { "type": "string" },
+        "tlsSecretName": { "type": "string" },
+        "secretTemplates": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "extraEnv": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/generatedBaseExtraEnv" }
+        }
+      },
+      "additionalProperties": false
+    },
     "generatedBaseValues": {
       "type": "object",
       "properties": {
@@ -234,9 +254,38 @@
           "type": "string",
           "enum": ["apiService"]
         },
-        "inputs": { "$ref": "#/definitions/generatedBaseApiServiceInputs" }
+        "inputs": { "$ref": "#/definitions/generatedBaseApiServiceInputsPartial" }
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    },
+    "generatedBaseDefaults": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["apiService"]
+        },
+        "inputs": { "$ref": "#/definitions/generatedBaseApiServiceInputsPartial" }
       },
       "required": ["profile", "inputs"],
+      "additionalProperties": false
+    },
+    "deployDefaults": {
+      "type": "object",
+      "properties": {
+        "chart": { "type": "string" },
+        "repo": { "type": "string" },
+        "repoCredentialId": { "type": "string" },
+        "repoCredential": { "type": "string" },
+        "repoCredentials": { "$ref": "#/definitions/repoCredentials" },
+        "repoUsername": { "type": "string" },
+        "repoPassword": { "type": "string" },
+        "wait": { "type": "boolean" },
+        "atomic": { "type": "boolean" },
+        "timeout": { "type": "string" },
+        "rolloutTimeout": { "type": "string" }
+      },
       "additionalProperties": false
     },
     "environments": {
@@ -245,11 +294,14 @@
         "order": {
           "type": "array",
           "items": { "type": "string" }
-        }
+        },
+        "defaults": { "$ref": "#/definitions/deployDefaults" },
+        "generatedBaseDefaults": { "$ref": "#/definitions/generatedBaseDefaults" }
       },
       "additionalProperties": {
         "type": "object",
         "properties": {
+          "extends": { "type": "string" },
           "chart": { "type": "string" },
           "namespace": { "type": "string" },
           "repo": { "type": "string" },
@@ -287,11 +339,16 @@
           "atomic": { "type": "boolean" },
           "timeout": { "type": "string" },
           "smoke": {
-            "type": "object",
-            "properties": {
-              "url": { "type": "string", "format": "uri" },
-              "script": { "type": "string" }
-            }
+            "oneOf": [
+              { "type": "boolean", "enum": [false] },
+              {
+                "type": "object",
+                "properties": {
+                  "url": { "type": "string", "format": "uri" },
+                  "script": { "type": "string" }
+                }
+              }
+            ]
           }
         },
         "additionalProperties": true
