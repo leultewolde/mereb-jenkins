@@ -839,8 +839,16 @@ class ConfigNormalizer implements Serializable {
     private static Map<String, Object> deepMerge(Map left, Map right) {
         Map<String, Object> merged = [:]
         Set<String> keys = new LinkedHashSet<>()
-        keys.addAll(left.keySet()*.toString())
-        keys.addAll(right.keySet()*.toString())
+        left.keySet().each { Object key ->
+            if (key != null) {
+                keys.add(key.toString())
+            }
+        }
+        right.keySet().each { Object key ->
+            if (key != null) {
+                keys.add(key.toString())
+            }
+        }
         for (String key : keys) {
             boolean hasLeft = left.containsKey(key)
             boolean hasRight = right.containsKey(key)
