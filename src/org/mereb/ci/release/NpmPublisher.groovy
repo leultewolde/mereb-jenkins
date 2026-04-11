@@ -80,6 +80,7 @@ if [ ! -f "\$PACKAGE_JSON_PATH" ]; then
   echo "package.json not found at \${PACKAGE_JSON_PATH}" >&2
   exit 1
 fi
+PACKAGE_NAME="\$(node -p "require('\${PACKAGE_JSON_PATH}').name || ''")"
 PACKAGE_VERSION="\$(node -p "require('\${PACKAGE_JSON_PATH}').version")"
 ${tagCheckSnippet}if [ -z "\${NPM_TOKEN:-}" ]; then
   echo "NPM_TOKEN credential is not available; configure 'npm-registry-token' in Jenkins." >&2
@@ -88,11 +89,12 @@ fi
 
 ${registrySnippet}${accessSnippet}REGISTRY_HOST="\${REGISTRY_URL#http://}"
 REGISTRY_HOST="\${REGISTRY_HOST#https://}"
-REGISTRY_HOST="\${REGISTRY_HOST%%/}"
+REGISTRY_AUTH_PATH="\${REGISTRY_HOST%/}"
+REGISTRY_HOST="\${REGISTRY_AUTH_PATH%%/*}"
 
 mkdir -p "\${HOME}/.npm"
 {
-  printf '//%s/:_authToken=%s\\n' "\${REGISTRY_HOST}" "\${NPM_TOKEN}"
+  printf '//%s/:_authToken=%s\\n' "\${REGISTRY_AUTH_PATH}" "\${NPM_TOKEN}"
   printf 'registry=%s\\n' "\${REGISTRY_URL}"
   printf 'always-auth=true\\n'
 } > "\${HOME}/.npmrc"
@@ -105,7 +107,34 @@ case "\${REGISTRY_URL}" in
     ;;
 esac
 
-pnpm publish --registry "\${REGISTRY_URL}" --no-git-checks "\${ACCESS_FLAGS[@]}"
+NPM_WHOAMI="\$(npm whoami --registry "\${REGISTRY_URL}" 2>/dev/null || true)"
+if [ -n "\${NPM_WHOAMI}" ]; then
+  echo "Authenticated npm user: \${NPM_WHOAMI}"
+fi
+
+echo "Publishing \${PACKAGE_NAME:-package}@\${PACKAGE_VERSION} to \${REGISTRY_URL}"
+PUBLISH_LOG="\$(mktemp)"
+set +e
+pnpm publish --registry "\${REGISTRY_URL}" --no-git-checks "\${ACCESS_FLAGS[@]}" 2>&1 | tee "\${PUBLISH_LOG}"
+PUBLISH_EXIT=\${PIPESTATUS[0]}
+set -e
+
+if [ "\${PUBLISH_EXIT}" -ne 0 ]; then
+  if [[ "\${REGISTRY_URL}" =~ ^https?://registry\\.npmjs\\.org(/.*)?\$ ]] && [[ "\${PACKAGE_NAME}" == @*/* ]] && grep -Eq '(npm ERR!|npm error) 404 .*registry\\.npmjs\\.org/' "\${PUBLISH_LOG}"; then
+    PACKAGE_SCOPE="\${PACKAGE_NAME%%/*}"
+    echo "npmjs rejected the scoped package publish for \${PACKAGE_NAME}." >&2
+    echo "Likely causes: the Jenkins token is valid but cannot publish under scope \${PACKAGE_SCOPE}," >&2
+    echo "the npm organization does not exist, or the token owner is not a member with publish rights." >&2
+    if [ -n "\${NPM_WHOAMI}" ]; then
+      echo "Authenticated npm user: \${NPM_WHOAMI}" >&2
+    fi
+    echo "Verify the Jenkins NPM_TOKEN credential can publish packages for \${PACKAGE_SCOPE} on npmjs.com." >&2
+  fi
+  rm -f "\${PUBLISH_LOG}"
+  exit "\${PUBLISH_EXIT}"
+fi
+
+rm -f "\${PUBLISH_LOG}"
 """
 
         steps.sh script: script, label: "Publish npm package from ${pkgDir}"

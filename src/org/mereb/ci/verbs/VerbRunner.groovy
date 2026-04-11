@@ -52,6 +52,9 @@ class VerbRunner implements Serializable {
             if (kv.envFile) {
                 opts.envFile = kv.envFile
             }
+            if (kv.containsKey('loadEnvFile')) {
+                opts.loadEnvFile = kv.loadEnvFile
+            }
             if (kv.skipTagCheck) {
                 opts.skipTagCheck = kv.skipTagCheck
             }

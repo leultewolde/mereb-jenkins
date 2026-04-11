@@ -30,6 +30,16 @@ class VerbRunnerTest {
     }
 
     @Test
+    void "passes loadEnvFile through pnpm publish verb"() {
+        FakeSteps steps = new FakeSteps()
+
+        new VerbRunner(steps).run('pnpm.publish loadEnvFile=false envFile=.ci/custom-env.sh')
+
+        assertTrue(steps.calls.last().contains('label:Publish npm package from .'))
+        assertFalse(steps.calls.last().contains(". '.ci/custom-env.sh'"))
+    }
+
+    @Test
     void "throws for unknown verbs"() {
         FakeSteps steps = new FakeSteps()
         def runner = new VerbRunner(steps)
@@ -42,9 +52,14 @@ class VerbRunnerTest {
 
     private static class FakeSteps {
         List<String> calls = []
+        Map env = [:]
 
         void sh(Object script) {
             calls << "sh:${script}".toString()
+        }
+
+        void sh(Map args) {
+            calls << "sh:label:${args.label};script:${args.script}".toString()
         }
 
         void error(String message) {
