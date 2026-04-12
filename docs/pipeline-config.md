@@ -119,8 +119,9 @@ deploy:
       containerPort: 4002
       routePrefix: /feed
       secretTemplates:
-        DATABASE_URL: FEED_DATABASE_URL
         SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
+      platformSecretTemplates:
+        DATABASE_URL: FEED_DATABASE_URL
       extraEnv:
         - name: OIDC_ISSUER
           fromPlatformIdentityConfigKey: OIDC_ISSUER
@@ -148,6 +149,8 @@ deploy:
 - `extends` supports any env in the same `deploy` block. Unknown env names and inheritance cycles fail fast.
 - `generatedBaseValues.profile` currently supports `apiService`.
 - `generatedBaseValues.inputs` captures conventional service metadata such as ingress route, service port, VSO secret mappings, and env vars sourced from the env-specific `platform-identity-*` ConfigMap or Secret.
+- `generatedBaseValues.inputs.secretTemplates` reads app-managed keys from the standard Vault KV path `apps/<env>`.
+- `generatedBaseValues.inputs.platformSecretTemplates` reads platform-managed keys from the dedicated Vault KV path `apps/<env>/platform-db`.
 - The library renders the generated base into a temporary workspace file and prepends it before `valuesFiles`, so checked-in YAML still wins for service-specific overrides such as `configMap.data`, `resources`, `autoscaling`, and `deploymentStrategy`.
 
 ### Generated Values Overlays

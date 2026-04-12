@@ -50,11 +50,13 @@ class GeneratedValuesRendererTest {
                 secretName    : 'svc-profile-secrets',
                 tlsSecretName : 'profile-prd-tls',
                 secretTemplates: [
-                    DATABASE_URL             : 'PROFILE_DATABASE_URL',
                     KEYCLOAK_WEBHOOK_SECRET  : 'KEYCLOAK_WEBHOOK_SECRET',
                     KEYCLOAK_WEBHOOK_BASIC_USER: 'KEYCLOAK_WEBHOOK_BASIC_USER',
                     KEYCLOAK_WEBHOOK_BASIC_PASS: 'KEYCLOAK_WEBHOOK_BASIC_PASS',
                     SPLUNK_HEC_TOKEN         : 'SPLUNK_HEC_TOKEN'
+                ],
+                platformSecretTemplates: [
+                    DATABASE_URL             : 'PROFILE_DATABASE_URL'
                 ],
                 extraEnv      : [
                     [name: 'OIDC_ISSUER', fromPlatformIdentityConfigKey: 'OIDC_ISSUER'],
@@ -81,7 +83,10 @@ class GeneratedValuesRendererTest {
         assertEquals('apps/prd', parsed.vaultSecretsOperator.staticSecrets[0].spec.path)
         assertEquals('svc-profile-secrets', parsed.vaultSecretsOperator.staticSecrets[0].spec.destination.name)
         assertEquals('svc-profile', parsed.vaultSecretsOperator.staticSecrets[0].spec.rolloutRestartTargets[0].name)
-        assertEquals('{{- get .Secrets "PROFILE_DATABASE_URL" -}}', parsed.vaultSecretsOperator.staticSecrets[0].spec.destination.transformation.templates.DATABASE_URL.text)
+        assertEquals('apps/prd/platform-db', parsed.vaultSecretsOperator.staticSecrets[1].spec.path)
+        assertEquals('svc-profile-secrets-platform', parsed.vaultSecretsOperator.staticSecrets[1].spec.destination.name)
+        assertEquals('{{- get .Secrets "PROFILE_DATABASE_URL" -}}', parsed.vaultSecretsOperator.staticSecrets[1].spec.destination.transformation.templates.DATABASE_URL.text)
+        assertEquals('svc-profile-secrets-platform', parsed.image.envFrom[2].secretRef.name)
     }
 
     @Test

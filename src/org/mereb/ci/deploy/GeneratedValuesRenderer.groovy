@@ -16,6 +16,7 @@ class GeneratedValuesRenderer implements Serializable {
             vaultAuthGlobal       : 'mereb-apps-dev',
             vaultMount            : 'kubernetes-dev',
             vaultPath             : 'apps/dev',
+            platformDbVaultPath   : 'apps/dev/platform-db',
             rolePrefix            : 'apps-dev'
         ],
         stg: [
@@ -26,6 +27,7 @@ class GeneratedValuesRenderer implements Serializable {
             vaultAuthGlobal       : 'mereb-apps-stg',
             vaultMount            : 'kubernetes-stg',
             vaultPath             : 'apps/stg',
+            platformDbVaultPath   : 'apps/stg/platform-db',
             rolePrefix            : 'apps-stg'
         ],
         prd: [
@@ -36,6 +38,7 @@ class GeneratedValuesRenderer implements Serializable {
             vaultAuthGlobal       : 'mereb-apps-prd',
             vaultMount            : 'kubernetes-prd',
             vaultPath             : 'apps/prd',
+            platformDbVaultPath   : 'apps/prd/platform-db',
             rolePrefix            : 'apps-prd'
         ]
     ].asImmutable()
@@ -116,31 +119,64 @@ class GeneratedValuesRenderer implements Serializable {
         String tlsSecretName = requiredString(inputs, 'tlsSecretName', 'generatedBaseValues.inputs.tlsSecretName')
         Integer containerPort = requiredInteger(inputs, 'containerPort', 'generatedBaseValues.inputs.containerPort')
         Map<String, String> secretTemplates = normalizeStringMap(inputs.secretTemplates, 'generatedBaseValues.inputs.secretTemplates')
-        if (secretTemplates.isEmpty()) {
-            throw new IllegalArgumentException('generatedBaseValues.inputs.secretTemplates must define at least one destination key')
+        Map<String, String> platformSecretTemplates = normalizeOptionalStringMap(inputs.platformSecretTemplates, 'generatedBaseValues.inputs.platformSecretTemplates')
+        if (secretTemplates.isEmpty() && platformSecretTemplates.isEmpty()) {
+            throw new IllegalArgumentException('generatedBaseValues.inputs must define at least one secret template source')
         }
         List<Map<String, Object>> extraEnv = normalizeExtraEnv(inputs.extraEnv, envDefaults)
         String host = envDefaults.host
         String rolloutTarget = releaseName?.trim() ?: serviceName
+        String platformSecretName = "${secretName}-platform"
+        List<Map<String, Object>> envFrom = [
+            [
+                configMapRef: [
+                    name: configMapName
+                ]
+            ]
+        ]
+        if (!secretTemplates.isEmpty()) {
+            envFrom << [
+                secretRef: [
+                    name    : secretName,
+                    optional: false
+                ]
+            ]
+        }
+        if (!platformSecretTemplates.isEmpty()) {
+            envFrom << [
+                secretRef: [
+                    name    : platformSecretName,
+                    optional: false
+                ]
+            ]
+        }
+
+        List<Map<String, Object>> staticSecrets = []
+        if (!secretTemplates.isEmpty()) {
+            staticSecrets << buildStaticSecret(
+                "${serviceName}-runtime",
+                envDefaults.vaultPath,
+                secretName,
+                rolloutTarget,
+                secretTemplates
+            )
+        }
+        if (!platformSecretTemplates.isEmpty()) {
+            staticSecrets << buildStaticSecret(
+                "${serviceName}-platform-db-runtime",
+                envDefaults.platformDbVaultPath,
+                platformSecretName,
+                rolloutTarget,
+                platformSecretTemplates
+            )
+        }
 
         return [
             nameOverride        : serviceName,
             imagePullSecrets    : ['regcred'],
             image               : [
                 env    : defaultServiceEnv(serviceName, envDefaults) + extraEnv,
-                envFrom: [
-                    [
-                        configMapRef: [
-                            name: configMapName
-                        ]
-                    ],
-                    [
-                        secretRef: [
-                            name    : secretName,
-                            optional: false
-                        ]
-                    ]
-                ]
+                envFrom: envFrom
             ],
             service             : [
                 ports: [
@@ -198,32 +234,40 @@ class GeneratedValuesRenderer implements Serializable {
                         mount             : envDefaults.vaultMount
                     ]
                 ],
-                staticSecrets: [
+                staticSecrets: staticSecrets
+            ]
+        ]
+    }
+
+    private static Map<String, Object> buildStaticSecret(
+        String name,
+        String vaultPath,
+        String destinationName,
+        String rolloutTarget,
+        Map<String, String> secretTemplates
+    ) {
+        return [
+            name: name,
+            spec: [
+                type                 : 'kv-v2',
+                mount                : 'kv',
+                path                 : vaultPath,
+                refreshAfter         : '5m',
+                destination          : [
+                    name          : destinationName,
+                    create        : true,
+                    overwrite     : true,
+                    transformation: [
+                        excludes : ['.*'],
+                        templates: secretTemplates.collectEntries { String destinationKey, String sourceKey ->
+                            [(destinationKey): [text: "{{- get .Secrets \"${sourceKey}\" -}}"]]
+                        }
+                    ]
+                ],
+                rolloutRestartTargets: [
                     [
-                        name: "${serviceName}-runtime",
-                        spec: [
-                            type                 : 'kv-v2',
-                            mount                : 'kv',
-                            path                 : envDefaults.vaultPath,
-                            refreshAfter         : '5m',
-                            destination          : [
-                                name          : secretName,
-                                create        : true,
-                                overwrite     : true,
-                                transformation: [
-                                    excludes : ['.*'],
-                                    templates: secretTemplates.collectEntries { String destinationKey, String sourceKey ->
-                                        [(destinationKey): [text: "{{- get .Secrets \"${sourceKey}\" -}}"]]
-                                    }
-                                ]
-                            ],
-                            rolloutRestartTargets: [
-                                [
-                                    kind: 'Deployment',
-                                    name: rolloutTarget
-                                ]
-                            ]
-                        ]
+                        kind: 'Deployment',
+                        name: rolloutTarget
                     ]
                 ]
             ]
@@ -365,6 +409,13 @@ class GeneratedValuesRenderer implements Serializable {
             normalized[renderedKey] = renderedValue
         }
         return normalized
+    }
+
+    private static Map<String, String> normalizeOptionalStringMap(Object raw, String label) {
+        if (raw == null) {
+            return [:]
+        }
+        return normalizeStringMap(raw, label)
     }
 
     private static Map<String, Object> outboxWorkerProfile() {

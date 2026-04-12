@@ -67,8 +67,10 @@ class HelmDeploymentContextBuilderTest {
                     secretName    : 'svc-feed-dev-secrets',
                     tlsSecretName : 'feed-dev-tls',
                     secretTemplates: [
-                        DATABASE_URL   : 'FEED_DATABASE_URL',
                         SPLUNK_HEC_TOKEN: 'SPLUNK_HEC_TOKEN'
+                    ],
+                    platformSecretTemplates: [
+                        DATABASE_URL   : 'FEED_DATABASE_URL'
                     ],
                     extraEnv      : [
                         [name: 'OIDC_ISSUER', fromPlatformIdentityConfigKey: 'OIDC_ISSUER']
@@ -112,6 +114,9 @@ class HelmDeploymentContextBuilderTest {
                         containerPort : 4002,
                         routePrefix   : '/feed',
                         secretTemplates: [
+                            SPLUNK_HEC_TOKEN: 'SPLUNK_HEC_TOKEN'
+                        ],
+                        platformSecretTemplates: [
                             DATABASE_URL: 'FEED_DATABASE_URL'
                         ]
                     ]
