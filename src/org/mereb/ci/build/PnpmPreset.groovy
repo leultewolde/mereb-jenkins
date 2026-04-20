@@ -68,6 +68,7 @@ class PnpmPreset implements Serializable {
                 PNPM_USE_FILTER     : PipelineUtils.boolString(useFilter),
                 PNPM_ALLOW_WORKSPACE: PipelineUtils.boolString(task.workspace as Boolean)
             ]
+            envMap.putAll(task.env instanceof Map ? (task.env as Map) : [:])
             if (hasPackage) {
                 envMap.put('PNPM_PACKAGE_NAME', packageName)
             }
@@ -76,7 +77,8 @@ class PnpmPreset implements Serializable {
             stages << [
                 name: stageLabel,
                 env : envMap,
-                sh  : (task.script ?: runScript(skipPatterns))
+                sh  : (task.script ?: runScript(skipPatterns)),
+                credentials: task.credentials instanceof List ? task.credentials : []
             ]
         }
 
@@ -169,7 +171,9 @@ class PnpmPreset implements Serializable {
                     workspace   : stage.containsKey('workspace') ? (stage.workspace as Boolean) : true,
                     packageDir  : (stage.packageDir ?: stage.dir ?: stage.path ?: stage.packagePath)?.toString(),
                     packageName : (stage.packageName ?: stage.package ?: stage.pkg)?.toString(),
-                    skipIfMissing: PipelineUtils.toStringList(stage.skipIfMissing ?: stage.skipIfMissingFiles)
+                    skipIfMissing: PipelineUtils.toStringList(stage.skipIfMissing ?: stage.skipIfMissingFiles),
+                    env         : PipelineUtils.toStringMap(stage.env),
+                    credentials : stage.credentials instanceof List ? stage.credentials : []
                 ]
                 tasks << normalized
             } else {
@@ -183,7 +187,9 @@ class PnpmPreset implements Serializable {
                     command     : defaultCommand(type),
                     filter      : true,
                     workspace   : true,
-                    skipIfMissing: []
+                    skipIfMissing: [],
+                    env         : [:],
+                    credentials : []
                 ]
             }
         }

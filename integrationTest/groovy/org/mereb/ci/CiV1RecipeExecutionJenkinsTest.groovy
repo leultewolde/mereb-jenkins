@@ -223,6 +223,37 @@ class CiV1RecipeExecutionJenkinsTest extends BasePipelineTest {
         assertFalse(stages.any { it.contains('GitHub Release') })
     }
 
+    @Test
+    void "ciV1 runs service post deploy stages after smoke"() {
+        config = [
+            version : 1,
+            recipe  : 'service',
+            build   : [stages: [[name: 'Build service', sh: 'echo build']]],
+            image   : [enabled: false, repository: 'ghcr.io/mereb/svc-profile'],
+            deploy  : [
+                order: ['dev'],
+                dev  : [
+                    namespace       : 'apps-dev',
+                    release         : 'svc-profile-dev',
+                    chart           : 'app-chart',
+                    repo            : 'https://example.com/charts',
+                    restartWorkloads: false,
+                    smoke           : [url: 'https://api-dev.mereb.app/profile/healthz'],
+                    postDeployStages: [[name: 'Publish GraphOS subgraph', sh: 'echo publish']]
+                ]
+            ]
+        ]
+
+        loadScript('vars/ciV1.groovy').call(configPath: '.ci/ci.mjc')
+
+        assertTrue(echoes.any { it.contains('ciV1 recipe: service') })
+        int smokeIndex = stages.indexOf('Smoke DEV')
+        int postDeployIndex = stages.indexOf('Publish GraphOS subgraph')
+        assertTrue(stages.contains('Deploy DEV'))
+        assertTrue(smokeIndex >= 0)
+        assertTrue(postDeployIndex > smokeIndex)
+    }
+
     private Object respondToShell(String script) {
         if (script.contains('git rev-parse HEAD')) {
             return 'abcdef1234567890abcdef1234567890abcdef12'

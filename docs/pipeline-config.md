@@ -95,6 +95,7 @@ deploy:
 Each environment supports:
 - `smoke` blocks (URL or script).
 - `smoke: false` to explicitly clear inherited smoke checks.
+- `postDeployStages` to run custom steps after a successful deploy, rollout verification, and smoke check for that environment.
 - `repoCredentials` for private Helm repos.
 - `repoCredentials.usernameEnv` / `passwordEnv` to customize the env vars bound during deploys (defaults to `HELM_REPO_USERNAME` / `HELM_REPO_PASSWORD`).
 - `valuesFiles`, `set`, `setString`, `setFile` to tweak Helm releases.
@@ -152,6 +153,36 @@ deploy:
 - `generatedBaseValues.inputs.secretTemplates` reads app-managed keys from the standard Vault KV path `apps/<env>`.
 - `generatedBaseValues.inputs.platformSecretTemplates` reads platform-managed keys from the dedicated Vault KV path `apps/<env>/platform-db`.
 - The library renders the generated base into a temporary workspace file and prepends it before `valuesFiles`, so checked-in YAML still wins for service-specific overrides such as `configMap.data`, `resources`, `autoscaling`, and `deploymentStrategy`.
+
+### Post-Deploy Stages
+```yaml
+deploy:
+  dev:
+    namespace: apps-dev
+    release: svc-profile-dev
+    smoke:
+      url: https://api-dev.mereb.app/profile/healthz
+    postDeployStages:
+      - name: Publish GraphOS subgraph
+        when: branch=main & !pr
+        credentials:
+          - type: string
+            id: graphos-rover-api-key
+            env: ROVER_APOLLO_KEY
+        sh: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          ./scripts/graphos/publish-subgraph.sh
+```
+
+- `postDeployStages` use the same shape as `releaseStages`: `name`, `when`, `env`, `verb` or `sh`, `credentials`, and `approval` (approval is normalized but not enforced by the runtime yet).
+- Service recipe execution order is now: build, image build/push, deploy, rollout verification, smoke, `postDeployStages`, then release automation.
+- Each `postDeployStages` stage receives:
+  - `DEPLOY_ENV`
+  - `DEPLOY_DISPLAY_NAME`
+  - `DEPLOY_NAMESPACE`
+  - `DEPLOY_RELEASE`
+- Existing exported pipeline env such as `IMAGE_REPOSITORY`, `IMAGE_TAG`, `IMAGE_REF`, `BRANCH_NAME`, `CHANGE_ID`, and `TAG_NAME` remain available as usual.
 
 ### Generated Values Overlays
 ```yaml

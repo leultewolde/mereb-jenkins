@@ -3,7 +3,9 @@ package org.mereb.ci.deploy
 import org.mereb.ci.Helpers
 import org.mereb.ci.credentials.CredentialHelper
 import org.mereb.ci.delivery.DeliveryPolicy
+import org.mereb.ci.util.StageExecutor
 
+import static org.mereb.ci.util.PipelineUtils.mapToEnvList
 import static org.mereb.ci.util.PipelineUtils.shellEscape
 
 /**
@@ -14,11 +16,15 @@ class DeployPipeline implements Serializable {
     private final def steps
     private final CredentialHelper credentialHelper
     private final HelmDeploymentContextBuilder contextBuilder
+    private final StageExecutor stageExecutor
+    private final Closure verbRunner
 
-    DeployPipeline(def steps, CredentialHelper credentialHelper) {
+    DeployPipeline(def steps, CredentialHelper credentialHelper, Closure verbRunner = null) {
         this.steps = steps
         this.credentialHelper = credentialHelper
         this.contextBuilder = new HelmDeploymentContextBuilder(steps)
+        this.stageExecutor = new StageExecutor(steps, credentialHelper)
+        this.verbRunner = verbRunner
     }
 
     void run(Map cfg, Map state, Closure afterEnvCallback = null) {
@@ -70,6 +76,7 @@ class DeployPipeline implements Serializable {
             }
 
             runSmoke(envCfg, deployBindings)
+            runPostDeployStages(envCfg, state)
 
             afterEnvCallback?.call(envName)
         }
@@ -140,6 +147,52 @@ ${kubectl} -n ${shellEscape(namespace)} create secret docker-registry ${shellEsc
                 }
             }
             credentialHelper.withOptionalCredentials(bindings, run)
+        }
+    }
+
+    private void runPostDeployStages(Map envCfg, Map state) {
+        List<Map> stages = envCfg.postDeployStages instanceof List ? (envCfg.postDeployStages as List<Map>) : []
+        if (!stages || stages.isEmpty()) {
+            return
+        }
+
+        stages.each { Map stageCfg ->
+            String name = stageCfg.name ?: "Post-Deploy ${envCfg.displayName}"
+            String whenCond = stageCfg.when ?: ''
+            if (whenCond && !Helpers.matchCondition(whenCond, steps.env)) {
+                steps.echo "Post-deploy stage '${name}' skipped by condition '${whenCond}'"
+                return
+            }
+
+            List<String> envList = mapToEnvList(stageCfg.env instanceof Map ? stageCfg.env : [:])
+            envList << "DEPLOY_ENV=${envCfg.name}".toString()
+            envList << "DEPLOY_DISPLAY_NAME=${envCfg.displayName}".toString()
+            envList << "DEPLOY_NAMESPACE=${envCfg.namespace}".toString()
+            envList << "DEPLOY_RELEASE=${envCfg.release}".toString()
+            if (state?.imageTag) {
+                envList << "IMAGE_TAG=${state.imageTag}".toString()
+            }
+            if (state?.imageRef) {
+                envList << "IMAGE_REF=${state.imageRef}".toString()
+            }
+            if (state?.repository) {
+                envList << "IMAGE_REPOSITORY=${state.repository}".toString()
+            }
+            Map bindingSource = [credentials: stageCfg.credentials]
+            List<Map> bindings = credentialHelper.bindingsFor(bindingSource)
+
+            stageExecutor.run(name, envList, bindings) {
+                if (stageCfg.verb) {
+                    if (verbRunner == null) {
+                        steps.error "Stage '${name}' uses verb '${stageCfg.verb}', but no verb runner is available."
+                    }
+                    verbRunner.call(stageCfg.verb as String)
+                } else if (stageCfg.sh) {
+                    steps.sh stageCfg.sh as String
+                } else {
+                    steps.echo "Stage '${name}' has no action."
+                }
+            }
         }
     }
 

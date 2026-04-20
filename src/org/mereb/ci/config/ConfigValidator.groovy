@@ -72,6 +72,11 @@ class ConfigValidator implements Serializable {
             envNodes.each { name, cfgNode ->
                 if (!(cfgNode instanceof Map)) {
                     errors << "deploy.${name} must be a map"
+                    return
+                }
+                Map envCfg = cfgNode as Map
+                if (envCfg.containsKey('postDeployStages') && !(envCfg.postDeployStages instanceof List)) {
+                    errors << "deploy.${name}.postDeployStages must be a list"
                 }
             }
             if ('staged'.equals(mode)) {

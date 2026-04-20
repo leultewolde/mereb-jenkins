@@ -29,7 +29,7 @@ class RecipeServicesFactory implements Serializable {
         }
         ReleaseFlow releaseFlow = new ReleaseFlow(steps, credentialHelper, runVerb, null, stageExecutor)
         TerraformPipeline terraformPipeline = new TerraformPipeline(steps, credentialHelper, stageExecutor, approvalHandler)
-        DeployPipeline deployPipeline = new DeployPipeline(steps, credentialHelper)
+        DeployPipeline deployPipeline = new DeployPipeline(steps, credentialHelper, runVerb)
         MicrofrontendPipeline microfrontendPipeline = new MicrofrontendPipeline(
             steps,
             credentialHelper,

@@ -279,6 +279,29 @@
       "required": ["profile", "inputs"],
       "additionalProperties": false
     },
+    "userStage": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "when": { "type": "string" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "verb": { "type": "string" },
+        "sh": { "type": "string" },
+        "credentials": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/credential" }
+        },
+        "approval": { "$ref": "#/definitions/approval" }
+      },
+      "oneOf": [
+        { "required": ["verb"] },
+        { "required": ["sh"] }
+      ],
+      "additionalProperties": true
+    },
     "deployDefaults": {
       "type": "object",
       "properties": {
@@ -346,6 +369,10 @@
           "wait": { "type": "boolean" },
           "atomic": { "type": "boolean" },
           "timeout": { "type": "string" },
+          "postDeployStages": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/userStage" }
+          },
           "smoke": {
             "oneOf": [
               { "type": "boolean", "enum": [false] },

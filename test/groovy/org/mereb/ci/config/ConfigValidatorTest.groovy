@@ -121,4 +121,34 @@ class ConfigValidatorTest {
         assertTrue(result.hasErrors())
         assertTrue(result.errors.any { it.contains('terraform environments cannot be combined') })
     }
+
+    @Test
+    void "accepts deploy post deploy stages and rejects non-list values"() {
+        Map valid = [
+            version: 1,
+            image  : [repository: 'ghcr.io/mereb/api'],
+            deploy : [
+                dev: [
+                    postDeployStages: [[name: 'Publish subgraph', sh: './scripts/graphos/publish-subgraph.sh']]
+                ]
+            ]
+        ]
+
+        def validResult = ConfigValidator.validate(valid)
+        assertFalse(validResult.hasErrors())
+
+        Map invalid = [
+            version: 1,
+            image  : [repository: 'ghcr.io/mereb/api'],
+            deploy : [
+                dev: [
+                    postDeployStages: [name: 'Publish subgraph']
+                ]
+            ]
+        ]
+
+        def invalidResult = ConfigValidator.validate(invalid)
+        assertTrue(invalidResult.hasErrors())
+        assertTrue(invalidResult.errors.any { it.contains('deploy.dev.postDeployStages') })
+    }
 }

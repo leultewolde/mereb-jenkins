@@ -229,6 +229,53 @@ class DeployPipelineTest {
         assertTrue(steps.shScripts.any { it.contains("logs 'svc-feed-dev-abc' --all-containers=true --tail=200") })
     }
 
+    @Test
+    void "runs post deploy stages after smoke with deploy context env"() {
+        FakeSteps steps = new FakeSteps()
+        CredentialHelper credentialHelper = new CredentialHelper(steps)
+        DeployPipeline pipeline = new DeployPipeline(steps, credentialHelper)
+
+        Map envCfg = [
+                name            : 'dev',
+                displayName     : 'DEV',
+                namespace       : 'apps-dev',
+                release         : 'svc-profile-dev',
+                chart           : 'app-chart',
+                repo            : 'https://example.com/chart',
+                rolloutTimeout  : '5m',
+                restartWorkloads: false,
+                when            : '',
+                smoke           : [url: 'https://api-dev.mereb.app/profile/healthz'],
+                postDeployStages: [[
+                        name       : 'Publish GraphOS subgraph',
+                        sh         : './scripts/graphos/publish-subgraph.sh',
+                        env        : [GRAPHOS_VARIANT: 'mereb-supergraph@dev'],
+                        credentials: [[type: 'string', id: 'graphos-rover-api-key', env: 'ROVER_APOLLO_KEY']]
+                ]]
+        ]
+
+        pipeline.run([
+                image : [enabled: true],
+                deploy: [order: ['dev'], environments: [dev: envCfg]]
+        ], [repository: 'registry.leultewolde.com/mereb/svc-profile', imageTag: 'main-abc123', imageRef: 'registry.leultewolde.com/mereb/svc-profile:main-abc123'])
+
+        assertEquals(1, steps.runSmokeCalls.size())
+        int smokeIndex = steps.stageCalls.indexOf('Smoke DEV')
+        int postDeployIndex = steps.stageCalls.indexOf('Publish GraphOS subgraph')
+        assertTrue(smokeIndex >= 0)
+        assertTrue(postDeployIndex > smokeIndex)
+        assertTrue(steps.withCredentialsBindings.any { bindings ->
+            bindings.any { (it.variable ?: it.tokenVariable) == 'ROVER_APOLLO_KEY' && it.credentialsId == 'graphos-rover-api-key' }
+        })
+        assertTrue(steps.withEnvCalls.any { envMap ->
+            envMap.DEPLOY_ENV == 'dev' &&
+                envMap.DEPLOY_NAMESPACE == 'apps-dev' &&
+                envMap.DEPLOY_RELEASE == 'svc-profile-dev' &&
+                envMap.GRAPHOS_VARIANT == 'mereb-supergraph@dev'
+        })
+        assertTrue(steps.shScripts.contains('./scripts/graphos/publish-subgraph.sh'))
+    }
+
     private static class FakeSteps {
         final Map env = [BRANCH_NAME: 'main', CHANGE_ID: '']
         final Map<String, String> files = [:]
@@ -238,6 +285,7 @@ class DeployPipelineTest {
         final List<Map> helmDeployCalls = []
         final List<Map> runSmokeCalls = []
         final List<Map<String, String>> withEnvCalls = []
+        final List<String> stageCalls = []
         String failScriptContains
         RuntimeException failure
 
@@ -256,6 +304,7 @@ class DeployPipelineTest {
         }
 
         void stage(String name, Closure body) {
+            stageCalls << name
             body?.call()
         }
 

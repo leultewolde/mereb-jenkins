@@ -267,6 +267,34 @@ class ConfigNormalizerTest {
     }
 
     @Test
+    void "normalizes deploy post deploy stages"() {
+        Map raw = [
+            version: 1,
+            image  : false,
+            deploy : [
+                dev: [
+                    chart           : 'app-chart',
+                    postDeployStages: [[
+                        name       : 'Publish subgraph',
+                        when       : 'branch=main & !pr',
+                        sh         : './scripts/graphos/publish-subgraph.sh',
+                        env        : [GRAPHOS_VARIANT: 'mereb-supergraph@dev'],
+                        credentials: [[type: 'string', id: 'graphos-rover-api-key', env: 'ROVER_APOLLO_KEY']]
+                    ]]
+                ]
+            ]
+        ]
+
+        Map cfg = ConfigNormalizer.normalize(raw, ['dev'], '.ci/ci.mjc')
+
+        assertEquals(1, cfg.deploy.environments.dev.postDeployStages.size())
+        assertEquals('Publish subgraph', cfg.deploy.environments.dev.postDeployStages[0].name)
+        assertEquals('branch=main & !pr', cfg.deploy.environments.dev.postDeployStages[0].when)
+        assertEquals('mereb-supergraph@dev', cfg.deploy.environments.dev.postDeployStages[0].env.GRAPHOS_VARIANT)
+        assertEquals('graphos-rover-api-key', cfg.deploy.environments.dev.postDeployStages[0].credentials[0].id)
+    }
+
+    @Test
     void "fails fast when deploy extends references an unknown environment"() {
         Map raw = [
             version: 1,

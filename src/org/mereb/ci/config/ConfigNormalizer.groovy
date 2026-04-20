@@ -707,7 +707,8 @@ class ConfigNormalizer implements Serializable {
             atomic         : envCfg.get('atomic') == null ? true : (envCfg.get('atomic') as Boolean),
             timeout        : asString(envCfg.get('timeout') ?: appCfg.get('timeout') ?: '10m'),
             rolloutTimeout : asString(envCfg.get('rolloutTimeout') ?: envCfg.get('timeout') ?: appCfg.get('timeout') ?: '10m'),
-            credentials    : envCfg.get('credentials') instanceof List ? envCfg.get('credentials') : []
+            credentials    : envCfg.get('credentials') instanceof List ? envCfg.get('credentials') : [],
+            postDeployStages: normalizeUserStages(envCfg.get('postDeployStages'))
         ]
 
         if (envCfg.containsKey('restartWorkloads')) {
