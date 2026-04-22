@@ -50,9 +50,33 @@ class VerbRunnerTest {
         assertTrue(error.message.contains('Unknown verb'))
     }
 
+    @Test
+    void "triggers downstream Jenkins build via jenkins build verb with debounce controls"() {
+        FakeSteps steps = new FakeSteps()
+        new VerbRunner(steps).run('jenkins.build job=graphos-promote-prd wait=false propagate=false quietPeriod=300')
+
+        assertEquals(1, steps.buildCalls.size())
+        assertEquals('graphos-promote-prd', steps.buildCalls[0].job)
+        assertEquals(false, steps.buildCalls[0].wait)
+        assertEquals(false, steps.buildCalls[0].propagate)
+        assertEquals(300, steps.buildCalls[0].quietPeriod)
+    }
+
+    @Test
+    void "jenkins build verb defaults wait and propagate to true"() {
+        FakeSteps steps = new FakeSteps()
+        new VerbRunner(steps).run('jenkins.build job=graphos-promote-prd')
+
+        assertEquals(1, steps.buildCalls.size())
+        assertEquals(true, steps.buildCalls[0].wait)
+        assertEquals(true, steps.buildCalls[0].propagate)
+        assertFalse(steps.buildCalls[0].containsKey('quietPeriod'))
+    }
+
     private static class FakeSteps {
         List<String> calls = []
         Map env = [:]
+        List<Map> buildCalls = []
 
         void sh(Object script) {
             calls << "sh:${script}".toString()
@@ -64,6 +88,10 @@ class VerbRunnerTest {
 
         void error(String message) {
             throw new RuntimeException(message)
+        }
+
+        void build(Map args) {
+            buildCalls << new LinkedHashMap(args)
         }
     }
 }

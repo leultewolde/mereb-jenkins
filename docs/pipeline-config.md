@@ -42,7 +42,7 @@ build:
       verb: node.lint
 ```
 
-- Use `verb` for built-in helpers (`node.*`, `gradle.*`).
+- Use `verb` for built-in helpers (`node.*`, `gradle.*`, `jenkins.build`).
 - Use `sh` to run an arbitrary shell script.
 - `env` injects temporary environment variables; `credentials` binds secret files or strings (see `CredentialHelper`).
 
@@ -173,6 +173,9 @@ deploy:
           #!/usr/bin/env bash
           set -euo pipefail
           ./scripts/graphos/publish-subgraph.sh
+      - name: Queue router promotion
+        when: '!pr'
+        verb: jenkins.build job=graphos-promote-prd wait=false propagate=false quietPeriod=300
 ```
 
 - `postDeployStages` use the same shape as `releaseStages`: `name`, `when`, `env`, `verb` or `sh`, `credentials`, and `approval` (approval is normalized but not enforced by the runtime yet).
@@ -183,6 +186,7 @@ deploy:
   - `DEPLOY_NAMESPACE`
   - `DEPLOY_RELEASE`
 - Existing exported pipeline env such as `IMAGE_REPOSITORY`, `IMAGE_TAG`, `IMAGE_REF`, `BRANCH_NAME`, `CHANGE_ID`, and `TAG_NAME` remain available as usual.
+- `jenkins.build` supports: `job=<name-or-folder-path>`, optional `wait=<true|false>`, `propagate=<true|false>`, and `quietPeriod=<seconds>`.
 
 ### Generated Values Overlays
 ```yaml

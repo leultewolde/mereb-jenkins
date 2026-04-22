@@ -114,6 +114,27 @@ class VerbRunner implements Serializable {
             steps.sh "kubectl apply -f ${shellEscape(file)}"
             return
         }
+        if (spec.startsWith('jenkins.build')) {
+            Map<String, String> kv = parseKVs(spec.substring('jenkins.build'.length()))
+            String job = kv['job'] ?: kv['name']
+            if (!job) {
+                steps.error('jenkins.build requires job=<job-name-or-path>')
+            }
+
+            Map buildArgs = [
+                job      : job,
+                wait     : asBoolean(kv['wait'], true),
+                propagate: asBoolean(kv['propagate'], true)
+            ]
+
+            Integer quietPeriod = asInteger(kv['quietPeriod'])
+            if (quietPeriod != null) {
+                buildArgs.quietPeriod = quietPeriod
+            }
+
+            steps.build(buildArgs)
+            return
+        }
 
         steps.error("Unknown verb: '${spec}'")
     }
@@ -148,5 +169,26 @@ class VerbRunner implements Serializable {
             }
         }
         return map
+    }
+
+    private static boolean asBoolean(String raw, boolean defaultValue) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return defaultValue
+        }
+        String normalized = raw.trim().toLowerCase()
+        if (['1', 'true', 'yes', 'y', 'on'].contains(normalized)) {
+            return true
+        }
+        if (['0', 'false', 'no', 'n', 'off'].contains(normalized)) {
+            return false
+        }
+        return defaultValue
+    }
+
+    private static Integer asInteger(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return null
+        }
+        return Integer.parseInt(raw.trim())
     }
 }
